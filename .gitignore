@@ -1,0 +1,72 @@
+# ESP-IDF / build output
+build/
+build-*/
+sdkconfig
+sdkconfig.old
+managed_components/
+
+# IDE / local
+.vscode/
+.idea/
+*.code-workspace
+.DS_Store
+Thumbs.db
+
+# Binaries and maps
+*.bin
+*.elf
+*.map
+*.hex
+
+# Runtime logs and backups
+*.log
+backup/
+backups/
+logs/
+SALIDA/
+output/
+out/
+
+# Flash/NVS/private dumps
+*.dump
+*.flash
+*.nvs
+flash-completa-*.bin
+verificacion-*.bin
+
+# Temporary files
+*.bak
+*.old
+*.tmp
+*~
+__pycache__/
+*.pyc
+
+# Local secrets / environment
+.env
+.env.*
+secrets.*
+credentials.*
+wifi.*
+private/
+
+# Release assets are uploaded to GitHub Releases, not committed
+release/*.zip
+release/*.7z
+release/*.exe
+
+
+# XiaoZhi Care - archivos locales de audio/herramientas
+tools/audio_care/entrada/
+tools/audio_care/convertidos/
+tools/audio_care/reporte.txt
+
+# Binarios FFmpeg locales
+tools/*.exe
+tools/audio_care/*.exe
+# XiaoZhi Care - archivos locales de audio/herramientas
+tools/audio_care/entrada/
+tools/audio_care/convertidos/
+tools/audio_care/reporte.txt
+tools/*.exe
+tools/audio_care/*.exe

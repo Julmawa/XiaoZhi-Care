@@ -1,0 +1,30 @@
+idf_component_register(
+    SRCS
+        "src/daily_time.cc"
+        "src/routine_id.cc"
+        "src/routine_schedule.cc"
+        "src/routine_placement.cc"
+        "src/care_routine.cc"
+        "src/nvs_routine_repository.cc"
+        "src/daily_routine_test.cc"
+        "src/daily_routine_engine.cc"
+        "src/daily_routine_engine_test.cc"
+        "src/routine_execution.cc"
+        "src/day_activity_memory.cc"
+        "src/care_data_day_activity_memory_repository.cc"
+        "src/day_activity_memory_repository_test.cc"
+        "src/companion_engine.cc"
+        "src/companion_engine_test.cc"
+        "src/care_alarm_config.cc"
+        "src/care_alarm_scheduler.cc"
+        "src/care_alarm_scheduler_test.cc"
+        "src/care_alarm_runtime.cc"
+        "src/care_alarm_notifier.cc"
+        "src/nvs_routine_execution_repository.cc"
+        "src/daily_routine_execution_test.cc"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        nvs_flash
+        care-voice
+)

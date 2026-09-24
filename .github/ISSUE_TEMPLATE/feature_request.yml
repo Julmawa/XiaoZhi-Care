@@ -1,0 +1,22 @@
+name: Feature request
+description: Suggest a XiaoZhi Care improvement
+title: "[FEATURE] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or need
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Privacy / safety considerations
+      description: Describe any effect on personal data, reminders, medication workflows or rollback.

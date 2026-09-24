@@ -1,0 +1,17 @@
+# ESP-IDF Partition Table
+# XiaoZhi Care U3 - 16MB flash
+# Base: partitions/v2/16m.csv
+# Criterio:
+# - Mantener nvs, otadata, phy_init, ota_0 y ota_1 iguales.
+# - Reducir assets de 8M a 6M.
+# - Agregar care_data y care_voice al final.
+#
+# Name,      Type, SubType, Offset,    Size,      Flags
+nvs,         data, nvs,     0x9000,    0x4000,
+otadata,     data, ota,     0xd000,    0x2000,
+phy_init,    data, phy,     0xf000,    0x1000,
+ota_0,       app,  ota_0,   0x20000,   0x3f0000,
+ota_1,       app,  ota_1,   ,          0x3f0000,
+assets,      data, spiffs,  0x800000,  0x600000,
+care_data,   data, spiffs,  0xe00000,  0x100000,
+voice,       data, spiffs,  0xf00000,  0x100000,

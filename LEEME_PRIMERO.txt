@@ -1,0 +1,33 @@
+﻿XIAOZHI CARE - CREADOR DEL INSTALADOR V1.1
+========================================
+
+Este paquete es para preparar la primera release instalable de XiaoZhi Care.
+
+IMPORTANTE
+- NO es todavía el ZIP que recibe el usuario final.
+- Toma los binarios YA COMPILADOS y validados de:
+  C:\xiaozhi-esp32_prueba3\build\default
+- No recompila XiaoZhi Care.
+- No necesita modificar el proyecto estable.
+
+PASO UNICO PARA CREAR EL ZIP FINAL
+1. Verifique que C:\xiaozhi-esp32_prueba3 es la version estable que acaba de probar.
+2. Haga doble clic en CREAR_INSTALADOR_FINAL.bat.
+3. El resultado aparecera dentro de la carpeta SALIDA.
+
+El ZIP generado en SALIDA es el que se prueba en una ESP32-S3 N16R8 con
+XiaoZhi 2.5.0 previamente instalado y funcionando bajo el perfil compatible.
+
+SEGURIDAD DEL INSTALADOR FINAL
+- Comprueba ESP32-S3, 16 MB Flash y 8 MB PSRAM.
+- Comprueba Secure Boot / Flash Encryption.
+- Comprueba tabla de particiones, version XiaoZhi y perfil.
+- Comprueba SHA-256 de los binarios.
+- Hace backup completo de 16 MB antes de escribir.
+- No usa erase-flash.
+- Preserva NVS.
+- En actualizaciones Care preserva care_data y voice.
+
+LIMITACION V1.1
+La release es especifica del perfil bread-compact-wifi validado. Un binario
+precompilado no puede conservar automaticamente un pinout personalizado distinto.

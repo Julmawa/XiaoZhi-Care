@@ -1,0 +1,23 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "Default",
+      "generator": "Ninja",
+      "binaryDir": "C:/xiaozhi-esp32_prueba3/build/default",
+      "cacheVariables": {
+        "SDKCONFIG": "C:/xiaozhi-esp32_prueba3/build/default/sdkconfig"
+      }
+    },
+    {
+      "name": "production",
+      "displayName": "Production",
+      "generator": "Ninja",
+      "binaryDir": "C:/xiaozhi-esp32_prueba3/build/production",
+      "cacheVariables": {
+        "SDKCONFIG": "C:/xiaozhi-esp32_prueba3/build/production/sdkconfig"
+      }
+    }
+  ]
+}

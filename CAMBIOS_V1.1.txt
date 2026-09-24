@@ -1,0 +1,9 @@
+﻿XIAOZHI CARE - INSTALADOR V1.1
+================================
+
+Correccion respecto de V1:
+- Corregida la validacion de ESP_APP_DESC_MAGIC_WORD (0xABCD5432) en Windows PowerShell 5.1.
+- La firma se compara byte a byte (32 54 CD AB), evitando conversiones signed/unsigned.
+- La misma correccion se aplica al preparador y al instalador final.
+
+No cambia firmware, particiones ni estrategia de instalacion.

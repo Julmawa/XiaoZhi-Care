@@ -1,0 +1,70 @@
+XIAOZHI CARE - INSTALADOR V1
+============================
+
+PARA QUIEN ES
+Este instalador esta pensado para una persona que ya tiene XiaoZhi funcionando
+y quiere agregar XiaoZhi Care sin usar Visual Studio, VS Code, ESP-IDF ni Python.
+
+COMPATIBILIDAD DE ESTA PRIMERA VERSION
+- ESP32-S3 N16R8.
+- 16 MB de memoria Flash.
+- 8 MB de PSRAM.
+- XiaoZhi 2.5.0 previamente instalado y funcionando.
+- Perfil de firmware soportado por la release: bread-compact-wifi.
+
+ANTES DE INSTALAR
+Compruebe que su XiaoZhi actual:
+1. inicia normalmente;
+2. se conecta a Wi-Fi;
+3. muestra correctamente su pantalla;
+4. escucha por el microfono;
+5. reproduce sonido por el parlante.
+
+XiaoZhi Care NO adivina ni reconfigura el display, el amplificador ni los pines.
+La release se instala solamente si detecta el perfil de firmware compatible.
+
+COMO INSTALAR
+1. Descomprima el ZIP completo en una carpeta.
+2. Conecte la ESP32-S3 por USB.
+3. Haga doble clic en INSTALAR_XIAOZHI_CARE.bat.
+4. Lea las comprobaciones que aparecen en pantalla.
+5. Si hay varios puertos COM, elija el correspondiente a la ESP32-S3.
+6. Confirme que pantalla, microfono y parlante funcionaban antes de instalar.
+7. El instalador crea un respaldo completo de 16 MB antes de modificar la placa.
+8. Cuando todas las comprobaciones sean correctas, confirme la instalacion.
+
+EL INSTALADOR COMPRUEBA
+- Chip ESP32-S3.
+- PSRAM de 8 MB.
+- Flash de 16 MB.
+- Secure Boot y Flash Encryption desactivados.
+- Tabla de particiones compatible.
+- XiaoZhi compatible instalado.
+- Perfil de hardware/firmware soportado.
+- Integridad SHA-256 de todos los binarios de XiaoZhi Care.
+
+QUE SE CONSERVA
+- No se ejecuta erase-flash.
+- No se borra la NVS de XiaoZhi.
+- Se crea un respaldo completo de la memoria antes de escribir.
+- Si XiaoZhi Care ya estaba instalado, care_data y voice se conservan.
+
+PRIMERA INSTALACION DESDE XIAOZHI OFICIAL
+La tabla oficial de XiaoZhi 2.5.0 para 16 MB usa los ultimos 8 MB como assets.
+XiaoZhi Care usa 6 MB para assets, 1 MB para care_data y 1 MB para voice.
+En la primera instalacion, el instalador prepara solamente esos 2 MB nuevos.
+No borra la NVS ni cambia los offsets de las aplicaciones OTA.
+
+SI APARECE UN ERROR
+No fuerce la instalacion. El instalador esta diseñado para cancelar antes de
+grabar cuando no puede demostrar compatibilidad. Conserve la carpeta backup.
+
+PRIVACIDAD
+El archivo de respaldo completo puede contener Wi-Fi y otros datos privados.
+No lo comparta ni lo publique.
+
+LIMITACION DE ESTA V1
+El nombre del perfil identifica la variante soportada, pero XiaoZhi Care sigue
+siendo un firmware compilado. Si su XiaoZhi fue modificado manualmente con otro
+display, codec, amplificador o pinout aun usando un nombre de perfil parecido, no
+use esta V1. En futuras releases se podran ofrecer variantes separadas por perfil.

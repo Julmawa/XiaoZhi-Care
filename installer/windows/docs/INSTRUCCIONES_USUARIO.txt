@@ -1,0 +1,47 @@
+﻿XIAOZHI CARE - INSTALLER / INSTALADOR / INSTALADOR
+=================================================
+
+LANGUAGE / IDIOMA
+The installer detects the Windows UI language automatically.
+El instalador detecta automaticamente el idioma de interfaz de Windows.
+O instalador detecta automaticamente o idioma da interface do Windows.
+
+Supported / Soportados / Suportados: Espanol, English, Portugues.
+Press ENTER to accept the detected language, or choose 1/2/3.
+Presione ENTER para aceptar el idioma detectado, o elija 1/2/3.
+Pressione ENTER para aceitar o idioma detectado, ou escolha 1/2/3.
+
+COMPATIBILITY / COMPATIBILIDAD / COMPATIBILIDADE
+- ESP32-S3 N16R8
+- 16 MB Flash
+- 8 MB PSRAM
+- XiaoZhi 2.5.0 already installed and working / previamente instalado y funcionando / previamente instalado e funcionando
+- Supported profile / Perfil soportado / Perfil suportado: bread-compact-wifi
+
+INSTALL / INSTALAR
+1. Extract the complete ZIP / Descomprima el ZIP completo / Extraia o ZIP completo.
+2. Connect the ESP32-S3 by USB / Conecte la ESP32-S3 por USB.
+3. Run INSTALAR_XIAOZHI_CARE.bat.
+4. Choose or accept the language / Elija o acepte el idioma / Escolha ou aceite o idioma.
+5. Follow the checks shown on screen.
+6. A full 16 MB backup is created before any installation write.
+7. Confirm installation only after all checks pass.
+
+SAFETY / SEGURIDAD / SEGURANCA
+- The installer does NOT run erase-flash.
+- El instalador NO ejecuta erase-flash.
+- O instalador NAO executa erase-flash.
+- XiaoZhi NVS is preserved / La NVS de XiaoZhi se conserva / A NVS do XiaoZhi e preservada.
+- Firmware files are checked with SHA-256.
+- Secure Boot and Flash Encryption must be disabled.
+- If compatibility cannot be proven, installation is cancelled before flashing.
+
+PRIVACY / PRIVACIDAD / PRIVACIDADE
+The full backup may contain Wi-Fi credentials and private data. Do not share it.
+El respaldo completo puede contener Wi-Fi y datos privados. No lo comparta.
+O backup completo pode conter credenciais Wi-Fi e dados privados. Nao o compartilhe.
+
+LIMITATION / LIMITACION / LIMITACAO
+This release supports the validated compiled hardware profile only. Custom display/audio/pin modifications require a separate compatible firmware build.
+Esta release soporta solamente el perfil de hardware compilado y validado. Modificaciones manuales de display/audio/pines requieren otro firmware compatible.
+Esta release suporta somente o perfil de hardware compilado e validado. Modificacoes manuais de tela/audio/pinos exigem outro firmware compativel.
