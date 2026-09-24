@@ -5,18 +5,18 @@
       "name": "default",
       "displayName": "Default",
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/default",
+      "binaryDir": "build/default",
       "cacheVariables": {
-        "SDKCONFIG": "${sourceDir}/build/default/sdkconfig"
+        "SDKCONFIG": "build/default/sdkconfig"
       }
     },
     {
       "name": "production",
       "displayName": "Production",
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/production",
+      "binaryDir": "build/production",
       "cacheVariables": {
-        "SDKCONFIG": "${sourceDir}/build/production/sdkconfig"
+        "SDKCONFIG": "build/production/sdkconfig"
       }
     }
   ]
