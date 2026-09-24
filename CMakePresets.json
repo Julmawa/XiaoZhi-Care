@@ -5,18 +5,18 @@
       "name": "default",
       "displayName": "Default",
       "generator": "Ninja",
-      "binaryDir": "C:/xiaozhi-esp32_prueba3/build/default",
+      "binaryDir": "${sourceDir}/build/default",
       "cacheVariables": {
-        "SDKCONFIG": "C:/xiaozhi-esp32_prueba3/build/default/sdkconfig"
+        "SDKCONFIG": "${sourceDir}/build/default/sdkconfig"
       }
     },
     {
       "name": "production",
       "displayName": "Production",
       "generator": "Ninja",
-      "binaryDir": "C:/xiaozhi-esp32_prueba3/build/production",
+      "binaryDir": "${sourceDir}/build/production",
       "cacheVariables": {
-        "SDKCONFIG": "C:/xiaozhi-esp32_prueba3/build/production/sdkconfig"
+        "SDKCONFIG": "${sourceDir}/build/production/sdkconfig"
       }
     }
   ]
