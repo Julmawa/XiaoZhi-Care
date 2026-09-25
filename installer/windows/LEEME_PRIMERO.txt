@@ -1,4 +1,4 @@
-﻿XIAOZHI CARE - CREADOR DEL INSTALADOR V1.3
+XIAOZHI CARE - CREADOR DEL INSTALADOR V1.3
 ========================================
 
 Este paquete es para preparar la primera release instalable de XiaoZhi Care.
@@ -6,12 +6,12 @@ Este paquete es para preparar la primera release instalable de XiaoZhi Care.
 IMPORTANTE
 - NO es todavía el ZIP que recibe el usuario final.
 - Toma los binarios YA COMPILADOS y validados de:
-  C:\xiaozhi-esp32_prueba3\build\default
+  <RAIZ_DEL_REPOSITORIO>\build\default
 - No recompila XiaoZhi Care.
 - No necesita modificar el proyecto estable.
 
 PASO UNICO PARA CREAR EL ZIP FINAL
-1. Verifique que C:\xiaozhi-esp32_prueba3 es la version estable que acaba de probar.
+1. Verifique que <RAIZ_DEL_REPOSITORIO> es la version estable que acaba de probar.
 2. Haga doble clic en CREAR_INSTALADOR_FINAL.bat.
 3. El resultado aparecera dentro de la carpeta SALIDA.
 

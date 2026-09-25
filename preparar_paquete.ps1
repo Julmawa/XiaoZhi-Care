@@ -1,17 +1,23 @@
 ﻿[CmdletBinding()]
 param(
-    [string]$BuildDir = 'C:\xiaozhi-esp32_prueba3\build\default',
+    [string]$BuildDir = '',
     [string]$CareVersion = '0.3.2-alpha',
-    [string]$Milestone = 'DP-043C',
+    [string]$Milestone = 'release',
     [string]$SupportedBoardSku = 'bread-compact-wifi',
     [string[]]$BaseXiaoZhiVersions = @('2.5.0')
 )
 
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
+
+if ([string]::IsNullOrWhiteSpace($BuildDir)) {
+    $BuildDir = Join-Path $Root 'build\default'
+}
+
 $RuntimeDir = Join-Path $Root 'runtime'
 $DocsDir = Join-Path $Root 'docs'
 $OutRoot = Join-Path $Root 'SALIDA'
+
 
 function Write-Ok([string]$Text) { Write-Host ('[OK]    ' + $Text) -ForegroundColor Green }
 function Write-Warn([string]$Text) { Write-Host ('[AVISO] ' + $Text) -ForegroundColor Yellow }

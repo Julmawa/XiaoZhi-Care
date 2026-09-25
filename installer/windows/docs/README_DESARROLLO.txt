@@ -1,15 +1,15 @@
-﻿XIAOZHI CARE - CREACION DE LA RELEASE INSTALABLE
+XIAOZHI CARE - CREACION DE LA RELEASE INSTALABLE
 =================================================
 
 Este archivo es para quien prepara la release, no para el usuario final.
 
 OBJETIVO
-Tomar el build final ya validado de C:\xiaozhi-esp32_prueba3\build\default
+Tomar el build final ya validado de <RAIZ_DEL_REPOSITORIO>\build\default
 y generar un ZIP que el usuario pueda instalar con doble clic, sin ESP-IDF,
 Python, Visual Studio ni VS Code.
 
 USO
-1. Verificar primero en hardware que C:\xiaozhi-esp32_prueba3 sea la version estable.
+1. Verificar primero en hardware que <RAIZ_DEL_REPOSITORIO> sea la version estable.
 2. Ejecutar CREAR_INSTALADOR_FINAL.bat.
 3. El preparador valida:
    - xiaozhi.bin / proyecto y version;
