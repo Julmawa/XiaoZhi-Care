@@ -21,6 +21,9 @@ public:
     bool ShowCareAlert(int visual_pattern, int visual_color, const char* message);
     void ClearCareAlert();
 
+    // DP044B3_ACK_VISUAL
+    bool ShowCareAckConfirmation() override;
+
 private:
     std::mutex mutex_;
     TaskHandle_t blink_task_ = nullptr;
@@ -33,6 +36,8 @@ private:
     // DP040C_FASE1_CARE_VISUAL_OVERLAY
     esp_timer_handle_t care_alert_timer_ = nullptr;
     std::atomic<bool> care_alert_active_{false};
+    // DP044B2_CONFIG_ACK_AND_VOICE_LED
+    std::atomic<bool> care_ack_confirmation_active_{false};
 
     void StartBlinkTask(int times, int interval_ms);
     void OnBlinkTimer();

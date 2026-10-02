@@ -529,8 +529,19 @@ inline void RegisterCareMcpTools() {
         });
 
 
+
+    // DP044B_UNIVERSAL_ACK
+    server.AddTool(
+        "care.acknowledge_last_alert",
+        "ACUSE DE RECIBO DE UN AVISO AUTOMATICO. DEBES usar esta herramienta cuando, justo despues de un recordatorio o alarma de XiaoZhi Care, el usuario responda solamente que lo escucho o recibio: por ejemplo 'si', 'si, lo escuche', 'entendido', 'recibido', 'esta bien' o 'gracias'. Esta herramienta confirma SOLO que el aviso fue recibido y detiene sus repeticiones. NUNCA significa que la actividad fue realizada ni que una medicacion fue tomada. NO la uses si la pregunta previa fue 'lo hiciste?' o 'lo tomaste?' y el usuario esta confirmando la realizacion: en ese caso conserva las herramientas existentes de ejecucion/pastillero.",
+        PropertyList(),
+        [&service](const PropertyList&) -> ReturnValue {
+            ESP_LOGI("CARE_MCP", "Tool call: care.acknowledge_last_alert");
+            return service.AcknowledgeLastAlert();
+        });
+
     registered = true;
-    ESP_LOGI("CARE_MCP", "Registered 24 XiaoZhi Care MCP tools");
+    ESP_LOGI("CARE_MCP", "Registered 25 XiaoZhi Care MCP tools");
 }
 
 }  // namespace xiaozhi_care

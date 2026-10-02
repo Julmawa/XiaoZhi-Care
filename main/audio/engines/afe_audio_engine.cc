@@ -150,7 +150,12 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms,
     afe_config->aec_init = codec_->input_reference();
     afe_config->aec_mode = AEC_MODE_FD_LOW_COST;
     afe_config->aec_nlp_level = AEC_NLP_LEVEL_VERYAGGR;
-    afe_config->ns_init = false;
+    // DP044B1_5_WEBRTC_NS
+    // XiaoZhi Care: reducir ruido ambiente antes del VAD/STT. La selección
+    // Kconfig del árbol Care es CONFIG_SR_NSN_WEBRTC=y, por lo que no requiere
+    // agregar un modelo NSNet a la partición de modelos.
+    afe_config->ns_init = true;
+    afe_config->afe_ns_mode = AFE_NS_MODE_WEBRTC;
     afe_config->vad_init = kUseAfeForVoiceProcessing;
     // DP-039 Fase 1B: MODE_0 was too permissive on the CARE hardware and
     // could remain in SPEECH because of room/background noise.
@@ -246,8 +251,11 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms,
     const char* detector = wake_detector_ == WakeDetector::kWakeNet
                                ? "WakeNet"
                                : (wake_detector_ == WakeDetector::kMultiNet ? "MultiNet" : "none");
-    ESP_LOGI(TAG, "Initialized FD AFE, detector: %s, NS: off, feed: %d, fetch: %d", detector,
-             afe_iface_->get_feed_chunksize(afe_data_), afe_iface_->get_fetch_chunksize(afe_data_));
+    ESP_LOGI(TAG,
+             "Initialized FD AFE, detector: %s, NS: WebRTC requested, feed: %d, fetch: %d",
+             detector,
+             afe_iface_->get_feed_chunksize(afe_data_),
+             afe_iface_->get_fetch_chunksize(afe_data_));
     ESP_LOGI(TAG, "After AFE create: free=%u min=%u largest=%u",
              heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
              heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),

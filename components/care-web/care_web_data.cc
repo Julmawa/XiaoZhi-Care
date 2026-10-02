@@ -27,6 +27,12 @@
 #include "care_news/news_settings.h"
 #include "care_radio/radio_service.h"
 
+// DP044B2_CONFIG_ACK_AND_VOICE_LED
+extern "C" uint32_t xiaozhi_care_ack_prompt_delay_seconds(void);
+extern "C" uint8_t xiaozhi_care_ack_max_presentations(void);
+extern "C" bool xiaozhi_care_ack_settings_set(uint32_t delay_seconds,
+                                               uint8_t max_presentations);
+
 namespace xiaozhi_care {
 namespace {
 
@@ -935,14 +941,45 @@ esp_err_t CareWebServer::HandleReminderDelete(httpd_req_t* req) {
     if (!GetInstance().Authorize(req, true)) return ESP_OK;
     std::string id;
     if (!ExtractId(req, kApiRemindersPrefix, id)) return SendError(req, "400 Bad Request", CareError::INVALID_ID);
+    // DP044B1_6_REMINDER_AUDIO_CASCADE
+    // La relación audio->recordatorio usa el ID estable del recordatorio. Antes
+    // de borrarlo recordamos qué audio está asociado para poder eliminarlo
+    // también del almacenamiento y de "Audios asignados".
+    auto& voice_store = voice::VoiceRecordingStore::GetInstance();
+    voice::VoiceRecordingInfo linked_recording;
+    const bool voice_store_ready = voice_store.Init();
+    const bool has_linked_recording =
+        voice_store_ready && voice_store.FindByReminder(id, linked_recording);
+
     CareError result = CareManager::GetInstance().DeleteReminder(id);
     if (result != CareError::OK) return SendError(req, HttpStatusFor(result), result);
 
-    // DP-018: preserve the audio file, but remove the association if its reminder disappears.
-    auto& voice_store = voice::VoiceRecordingStore::GetInstance();
-    if (voice_store.Init() && !voice_store.UnassignReminder(id)) {
-        ESP_LOGW("CARE_WEB", "Reminder deleted but voice association could not be cleared id=%s", id.c_str());
+    if (voice_store_ready) {
+        if (!voice_store.UnassignReminder(id)) {
+            ESP_LOGW("CARE_WEB",
+                     "Reminder deleted but voice association could not be cleared id=%s",
+                     id.c_str());
+        } else if (has_linked_recording) {
+            std::string voice_error;
+            if (!voice_store.Delete(linked_recording.id, &voice_error)) {
+                ESP_LOGW("CARE_WEB",
+                         "Reminder deleted but linked audio could not be deleted reminder=%s recording=%s error=%s",
+                         id.c_str(),
+                         linked_recording.id.c_str(),
+                         voice_error.c_str());
+            } else {
+                ESP_LOGI("CARE_WEB",
+                         "Reminder and linked audio deleted reminder=%s recording=%s",
+                         id.c_str(),
+                         linked_recording.id.c_str());
+            }
+        }
+    } else {
+        ESP_LOGW("CARE_WEB",
+                 "Reminder deleted but voice storage was not ready id=%s",
+                 id.c_str());
     }
+
     return SendJsonText(req, "200 OK", "{\"success\":true}");
 }
 
@@ -1314,6 +1351,156 @@ bool ValidateVoiceTargetId(const std::string& target_id) {
 }
 
 
+// DP044B1_3_USER_ACK_PROMPT
+esp_err_t CareWebServer::HandleAcknowledgementPromptGet(httpd_req_t* req) {
+    if (!GetInstance().Authorize(req, false)) return ESP_OK;
+
+    auto& store = voice::VoiceRecordingStore::GetInstance();
+    if (!store.Init()) {
+        return SendNamedError(req, "503 Service Unavailable", "VOICE_STORAGE_NOT_READY");
+    }
+
+    std::string audio;
+    voice::VoiceRecordingValidation info;
+    const bool configured = store.LoadAcknowledgementPrompt(audio, &info);
+
+    cJSON* root = cJSON_CreateObject();
+    cJSON* data = cJSON_CreateObject();
+    if (root == nullptr || data == nullptr) {
+        if (root) cJSON_Delete(root);
+        if (data) cJSON_Delete(data);
+        return SendNamedError(req, "500 Internal Server Error", "INTERNAL_ERROR");
+    }
+
+    cJSON_AddBoolToObject(root, "success", true);
+    cJSON_AddBoolToObject(data, "configured", configured);
+    cJSON_AddNumberToObject(data, "duration_ms",
+                            configured ? info.duration_ms : 0);
+    cJSON_AddNumberToObject(data, "size_bytes",
+                            configured ? static_cast<double>(info.size_bytes) : 0);
+    cJSON_AddNumberToObject(data, "max_file_bytes",
+                            static_cast<double>(store.Limits().max_file_bytes));
+    cJSON_AddNumberToObject(data, "max_duration_ms",
+                            store.Limits().max_duration_ms);
+    cJSON_AddStringToObject(data, "suggested_text",
+                            "¿Escuchaste el recordatorio?");
+    cJSON_AddItemToObject(root, "data", data);
+    return SendRoot(req, root);
+}
+
+esp_err_t CareWebServer::HandleAcknowledgementPromptPut(httpd_req_t* req) {
+    if (!GetInstance().Authorize(req, true)) return ESP_OK;
+
+    std::string body;
+    if (ReadBody(req, body) != ESP_OK) {
+        return SendNamedError(req, "400 Bad Request", "VOICE_UPLOAD_TOO_LARGE");
+    }
+
+    cJSON* root = cJSON_ParseWithLength(body.data(), body.size());
+    if (!cJSON_IsObject(root)) {
+        if (root) cJSON_Delete(root);
+        return SendNamedError(req, "400 Bad Request", "INVALID_JSON");
+    }
+
+    std::string b64 = ReadString(root, "content_base64");
+    cJSON_Delete(root);
+    if (b64.empty()) {
+        return SendNamedError(req, "400 Bad Request", "INVALID_BASE64");
+    }
+
+    size_t decoded_len = 0;
+    int rc = mbedtls_base64_decode(
+        nullptr, 0, &decoded_len,
+        reinterpret_cast<const unsigned char*>(b64.data()), b64.size());
+    if (rc != MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL || decoded_len == 0) {
+        return SendNamedError(req, "400 Bad Request", "INVALID_BASE64");
+    }
+
+    std::vector<uint8_t> bytes(decoded_len);
+    rc = mbedtls_base64_decode(
+        bytes.data(), bytes.size(), &decoded_len,
+        reinterpret_cast<const unsigned char*>(b64.data()), b64.size());
+    b64.clear();
+    if (rc != 0) {
+        return SendNamedError(req, "400 Bad Request", "INVALID_BASE64");
+    }
+    bytes.resize(decoded_len);
+
+    auto& store = voice::VoiceRecordingStore::GetInstance();
+    voice::VoiceRecordingValidation saved;
+    std::string error;
+    if (!store.SaveAcknowledgementPrompt(
+            bytes.data(), bytes.size(), saved, error)) {
+        ESP_LOGW("CARE_WEB",
+                 "Acknowledgement prompt rejected: %s",
+                 error.c_str());
+        return SendNamedError(
+            req,
+            error == "VOICE_STORAGE_NOT_READY"
+                ? "503 Service Unavailable"
+                : "400 Bad Request",
+            error.empty() ? "ACK_PROMPT_SAVE_FAILED" : error.c_str());
+    }
+
+    cJSON* out = cJSON_CreateObject();
+    cJSON* data = cJSON_CreateObject();
+    if (out == nullptr || data == nullptr) {
+        if (out) cJSON_Delete(out);
+        if (data) cJSON_Delete(data);
+        return SendNamedError(req, "500 Internal Server Error", "INTERNAL_ERROR");
+    }
+    cJSON_AddBoolToObject(out, "success", true);
+    cJSON_AddBoolToObject(data, "configured", true);
+    cJSON_AddNumberToObject(data, "duration_ms", saved.duration_ms);
+    cJSON_AddNumberToObject(data, "size_bytes",
+                            static_cast<double>(saved.size_bytes));
+    cJSON_AddItemToObject(out, "data", data);
+
+    ESP_LOGI("CARE_WEB",
+             "Acknowledgement prompt uploaded duration_ms=%u size=%u",
+             static_cast<unsigned>(saved.duration_ms),
+             static_cast<unsigned>(saved.size_bytes));
+    return SendRoot(req, out);
+}
+
+esp_err_t CareWebServer::HandleAcknowledgementPromptAudio(httpd_req_t* req) {
+    if (!GetInstance().Authorize(req, false)) return ESP_OK;
+
+    auto& store = voice::VoiceRecordingStore::GetInstance();
+    if (!store.Init()) {
+        return SendNamedError(req, "503 Service Unavailable", "VOICE_STORAGE_NOT_READY");
+    }
+
+    std::string audio;
+    if (!store.LoadAcknowledgementPrompt(audio, nullptr) || audio.empty()) {
+        return SendNamedError(req, "404 Not Found", "ACK_PROMPT_NOT_CONFIGURED");
+    }
+
+    httpd_resp_set_status(req, "200 OK");
+    httpd_resp_set_type(req, "audio/ogg");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_hdr(req, "Content-Disposition", "inline");
+    return httpd_resp_send(req, audio.data(), audio.size());
+}
+
+esp_err_t CareWebServer::HandleAcknowledgementPromptDelete(httpd_req_t* req) {
+    if (!GetInstance().Authorize(req, true)) return ESP_OK;
+
+    std::string error;
+    if (!voice::VoiceRecordingStore::GetInstance()
+             .DeleteAcknowledgementPrompt(&error)) {
+        return SendNamedError(
+            req,
+            error == "VOICE_STORAGE_NOT_READY"
+                ? "503 Service Unavailable"
+                : "500 Internal Server Error",
+            error.empty() ? "ACK_PROMPT_DELETE_FAILED" : error.c_str());
+    }
+
+    return SendJsonText(req, "200 OK", "{\"success\":true}");
+}
+
+
 esp_err_t CareWebServer::HandleVoiceRecordingsList(httpd_req_t* req) {
     if (!GetInstance().Authorize(req, false)) return ESP_OK;
     auto& store = voice::VoiceRecordingStore::GetInstance();
@@ -1622,6 +1809,20 @@ esp_err_t CareWebServer::HandleMaintenanceStatus(httpd_req_t* req) {
         cJSON_AddItemToObject(data, "listening", listening_json);
     }
 
+    // DP044B2_CONFIG_ACK_AND_VOICE_LED
+    cJSON* ack_settings_json = cJSON_CreateObject();
+    if (ack_settings_json != nullptr) {
+        cJSON_AddNumberToObject(
+            ack_settings_json,
+            "prompt_delay_seconds",
+            static_cast<double>(::xiaozhi_care_ack_prompt_delay_seconds()));
+        cJSON_AddNumberToObject(
+            ack_settings_json,
+            "max_presentations",
+            static_cast<double>(::xiaozhi_care_ack_max_presentations()));
+        cJSON_AddItemToObject(data, "ack_confirmation", ack_settings_json);
+    }
+
     // DP039_AUDIO_VOLUME_WEB
     if (GetInstance().audio_volume_getter_) {
         int volume = GetInstance().audio_volume_getter_();
@@ -1646,6 +1847,100 @@ esp_err_t CareWebServer::HandleMaintenanceStatus(httpd_req_t* req) {
     cJSON_AddBoolToObject(root, "success", true);
     cJSON_AddItemToObject(data, "usage", usage);
     cJSON_AddItemToObject(root, "data", data);
+    return SendRoot(req, root);
+}
+
+
+// DP044B2_CONFIG_ACK_AND_VOICE_LED
+esp_err_t CareWebServer::HandleMaintenanceAckSettings(httpd_req_t* req) {
+    if (!GetInstance().Authorize(req, true)) return ESP_OK;
+
+    if (req->content_len <= 0 || req->content_len > 160) {
+        return SendNamedError(req,
+                              "400 Bad Request",
+                              "INVALID_ACK_SETTINGS");
+    }
+
+    std::string body(static_cast<size_t>(req->content_len), '\0');
+    size_t received = 0;
+    while (received < body.size()) {
+        const int n = httpd_req_recv(
+            req, body.data() + received, body.size() - received);
+        if (n <= 0) {
+            return SendNamedError(req,
+                                  "400 Bad Request",
+                                  "INVALID_BODY");
+        }
+        received += static_cast<size_t>(n);
+    }
+
+    cJSON* json = cJSON_ParseWithLength(body.data(), body.size());
+    if (json == nullptr) {
+        return SendNamedError(req,
+                              "400 Bad Request",
+                              "INVALID_JSON");
+    }
+
+    cJSON* delay_json =
+        cJSON_GetObjectItemCaseSensitive(json, "prompt_delay_seconds");
+    cJSON* max_json =
+        cJSON_GetObjectItemCaseSensitive(json, "max_presentations");
+
+    if (!cJSON_IsNumber(delay_json) || !cJSON_IsNumber(max_json)) {
+        cJSON_Delete(json);
+        return SendNamedError(req,
+                              "400 Bad Request",
+                              "INVALID_ACK_SETTINGS");
+    }
+
+    const int delay_seconds = delay_json->valueint;
+    const int max_presentations = max_json->valueint;
+    cJSON_Delete(json);
+
+    if (delay_seconds < 0 || delay_seconds > 60 ||
+        max_presentations < 1 || max_presentations > 3) {
+        return SendNamedError(req,
+                              "400 Bad Request",
+                              "INVALID_ACK_SETTINGS");
+    }
+
+    if (!::xiaozhi_care_ack_settings_set(
+            static_cast<uint32_t>(delay_seconds),
+            static_cast<uint8_t>(max_presentations))) {
+        return SendNamedError(req,
+                              "500 Internal Server Error",
+                              "ACK_SETTINGS_SAVE_FAILED");
+    }
+
+    cJSON* root = cJSON_CreateObject();
+    cJSON* data = cJSON_CreateObject();
+    if (root == nullptr || data == nullptr) {
+        if (root) cJSON_Delete(root);
+        if (data) cJSON_Delete(data);
+        return SendJsonText(
+            req,
+            "500 Internal Server Error",
+            R"({"success":false,"error":"INTERNAL_ERROR"})");
+    }
+
+    cJSON_AddBoolToObject(root, "success", true);
+    cJSON_AddNumberToObject(
+        data,
+        "prompt_delay_seconds",
+        static_cast<double>(::xiaozhi_care_ack_prompt_delay_seconds()));
+    cJSON_AddNumberToObject(
+        data,
+        "max_presentations",
+        static_cast<double>(::xiaozhi_care_ack_max_presentations()));
+    cJSON_AddItemToObject(root, "data", data);
+
+    ESP_LOGI("CARE_WEB",
+             "DP044B2 ACK settings saved: delay_s=%u max_presentations=%u",
+             static_cast<unsigned>(
+                 ::xiaozhi_care_ack_prompt_delay_seconds()),
+             static_cast<unsigned>(
+                 ::xiaozhi_care_ack_max_presentations()));
+
     return SendRoot(req, root);
 }
 

@@ -380,8 +380,15 @@ esp_err_t CareWebServer::Start() {
         {"/api/maintenance/radio-stations", HTTP_GET, HandleMaintenanceRadioStationsGet},
         {"/api/maintenance/radio-stations", HTTP_PUT, HandleMaintenanceRadioStationsPut},
         {"/api/maintenance/listening-profile", HTTP_PUT, HandleMaintenanceListeningProfile},
+        // DP044B2_CONFIG_ACK_AND_VOICE_LED
+        {"/api/maintenance/ack-settings", HTTP_PUT, HandleMaintenanceAckSettings},
         {"/api/maintenance/clear-executions", HTTP_POST, HandleMaintenanceClearExecutions},
         {"/api/maintenance/clear-legacy-pillbox", HTTP_POST, HandleMaintenanceClearLegacyPillbox},
+        // DP044B1_3_USER_ACK_PROMPT
+        {"/api/maintenance/ack-prompt", HTTP_GET, HandleAcknowledgementPromptGet},
+        {"/api/maintenance/ack-prompt", HTTP_PUT, HandleAcknowledgementPromptPut},
+        {"/api/maintenance/ack-prompt", HTTP_DELETE, HandleAcknowledgementPromptDelete},
+        {"/api/maintenance/ack-prompt/audio", HTTP_GET, HandleAcknowledgementPromptAudio},
         {"/api/voice-recordings", HTTP_GET, HandleVoiceRecordingsList},
         {"/api/voice-recordings", HTTP_POST, HandleVoiceRecordingsCreate},
         {"/api/voice-recordings/*", HTTP_GET, HandleVoiceRecordingAudio},

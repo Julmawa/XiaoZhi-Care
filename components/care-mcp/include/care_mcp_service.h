@@ -58,6 +58,10 @@ public:
     // Titulares recientes para lectura por voz. No guarda noticias en NVS.
     std::string GetLatestNews(const std::string& category = "default");
 
+    // DP044B_UNIVERSAL_ACK
+    // Confirma únicamente la recepción del último aviso; no su ejecución.
+    std::string AcknowledgeLastAlert();
+
     std::string FindFamilyMember(const std::string& query);
     std::string WhoIsFamilyMember(const std::string& query);
     std::string GetFamilyRelationships(const std::string& person = "");

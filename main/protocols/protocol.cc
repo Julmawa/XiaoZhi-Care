@@ -79,6 +79,16 @@ void Protocol::SendWakeWordDetected(const std::string& wake_word) {
     SendText(json);
 }
 
+// DP044B2_1_TOUCH_TEXT_TTS_CONFIRMATION
+bool Protocol::SendTextInput(const std::string& text) {
+    // XiaoZhi usa listen/detect también para entrada textual.
+    // La frase utilizada por XiaoZhi Care es interna y no contiene comillas.
+    std::string json = "{\"session_id\":\"" + session_id_ +
+                       "\",\"type\":\"listen\",\"state\":\"detect\",\"text\":\"" + text +
+                       "\"}";
+    return SendText(json);
+}
+
 void Protocol::SendStartListening(ListeningMode mode) {
     std::string message = "{\"session_id\":\"" + session_id_ + "\"";
     message += ",\"type\":\"listen\",\"state\":\"start\"";

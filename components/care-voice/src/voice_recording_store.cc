@@ -14,6 +14,9 @@ namespace {
 constexpr char kTag[] = "CARE_VOICE";
 constexpr char kBasePath[] = "/voice";
 constexpr char kIndexPath[] = "/voice/index.json";
+constexpr char kAckPromptPath[] = "/voice/ack_prompt.ogg";  // DP044B1_3_USER_ACK_PROMPT
+constexpr char kAckPromptTempPath[] = "/voice/ack_prompt.tmp";
+constexpr char kAckPromptBackupPath[] = "/voice/ack_prompt.bak";
 constexpr char kPartitionLabel[] = "voice";
 
 uint16_t ReadLe16(const uint8_t* p) { return static_cast<uint16_t>(p[0]) | (static_cast<uint16_t>(p[1]) << 8); }
@@ -111,6 +114,136 @@ bool VoiceRecordingStore::LoadAudio(const std::string& id, std::string& audio_by
     std::fclose(f);
     if (got != audio_bytes.size()) { audio_bytes.clear(); return false; }
     if (info) *info = meta;
+    return true;
+}
+
+// DP044B1_3_USER_ACK_PROMPT
+bool VoiceRecordingStore::LoadAcknowledgementPrompt(
+    std::string& audio_bytes,
+    VoiceRecordingValidation* info) {
+    audio_bytes.clear();
+    if (info) *info = {};
+    if (!Init()) return false;
+
+    FILE* f = std::fopen(kAckPromptPath, "rb");
+    if (!f) return false;
+    if (std::fseek(f, 0, SEEK_END) != 0) {
+        std::fclose(f);
+        return false;
+    }
+    const long len = std::ftell(f);
+    if (len <= 0 || static_cast<size_t>(len) > limits_.max_file_bytes) {
+        std::fclose(f);
+        return false;
+    }
+    std::rewind(f);
+
+    audio_bytes.resize(static_cast<size_t>(len));
+    const size_t got = std::fread(audio_bytes.data(), 1, audio_bytes.size(), f);
+    std::fclose(f);
+    if (got != audio_bytes.size()) {
+        audio_bytes.clear();
+        return false;
+    }
+
+    const auto validation = ValidateOggOpus(
+        reinterpret_cast<const uint8_t*>(audio_bytes.data()),
+        audio_bytes.size());
+    if (!validation.ok) {
+        ESP_LOGW(kTag,
+                 "Acknowledgement prompt is invalid: %s",
+                 validation.error.c_str());
+        audio_bytes.clear();
+        return false;
+    }
+
+    if (info) *info = validation;
+    return true;
+}
+
+bool VoiceRecordingStore::SaveAcknowledgementPrompt(
+    const uint8_t* data,
+    size_t size,
+    VoiceRecordingValidation& saved,
+    std::string& error) {
+    saved = {};
+    error.clear();
+    if (!Init()) {
+        error = "VOICE_STORAGE_NOT_READY";
+        return false;
+    }
+
+    const auto validation = ValidateOggOpus(data, size);
+    if (!validation.ok) {
+        error = validation.error;
+        return false;
+    }
+
+    FILE* f = std::fopen(kAckPromptTempPath, "wb");
+    if (!f) {
+        error = "ACK_PROMPT_SAVE_FAILED";
+        return false;
+    }
+    const size_t written = std::fwrite(data, 1, size, f);
+    std::fclose(f);
+    if (written != size) {
+        std::remove(kAckPromptTempPath);
+        error = "ACK_PROMPT_SAVE_FAILED";
+        return false;
+    }
+
+    // El archivo anterior sólo se mueve después de haber escrito por completo
+    // el nuevo temporal. Si el rename final falla, intentamos restaurarlo.
+    std::remove(kAckPromptBackupPath);
+    bool had_previous = false;
+    if (FILE* previous = std::fopen(kAckPromptPath, "rb")) {
+        had_previous = true;
+        std::fclose(previous);
+        if (std::rename(kAckPromptPath, kAckPromptBackupPath) != 0) {
+            std::remove(kAckPromptTempPath);
+            error = "ACK_PROMPT_SAVE_FAILED";
+            return false;
+        }
+    }
+
+    if (std::rename(kAckPromptTempPath, kAckPromptPath) != 0) {
+        std::remove(kAckPromptTempPath);
+        if (had_previous) {
+            std::rename(kAckPromptBackupPath, kAckPromptPath);
+        }
+        error = "ACK_PROMPT_SAVE_FAILED";
+        return false;
+    }
+
+    if (had_previous) {
+        std::remove(kAckPromptBackupPath);
+    }
+
+    saved = validation;
+    ESP_LOGI(kTag,
+             "Acknowledgement prompt saved duration_ms=%u size=%u",
+             static_cast<unsigned>(saved.duration_ms),
+             static_cast<unsigned>(saved.size_bytes));
+    return true;
+}
+
+bool VoiceRecordingStore::DeleteAcknowledgementPrompt(std::string* error) {
+    if (error) error->clear();
+    if (!Init()) {
+        if (error) *error = "VOICE_STORAGE_NOT_READY";
+        return false;
+    }
+
+    FILE* f = std::fopen(kAckPromptPath, "rb");
+    if (!f) return true;
+    std::fclose(f);
+
+    if (std::remove(kAckPromptPath) != 0) {
+        if (error) *error = "ACK_PROMPT_DELETE_FAILED";
+        return false;
+    }
+
+    ESP_LOGI(kTag, "Acknowledgement prompt deleted");
     return true;
 }
 
@@ -342,4 +475,25 @@ std::string VoiceRecordingStore::EscapeFileId(const std::string& id) {
     return out.empty() ? "voice" : out;
 }
 
+
 }  // namespace xiaozhi_care::voice
+
+// DP044B1_3_V2_BRIDGE
+extern "C" bool xiaozhi_care_ack_prompt_load(std::string* audio_bytes,
+                                              uint32_t* duration_ms) {
+    if (audio_bytes == nullptr || duration_ms == nullptr) {
+        return false;
+    }
+
+    audio_bytes->clear();
+    *duration_ms = 0;
+
+    xiaozhi_care::voice::VoiceRecordingValidation info;
+    if (!xiaozhi_care::voice::VoiceRecordingStore::GetInstance()
+             .LoadAcknowledgementPrompt(*audio_bytes, &info)) {
+        return false;
+    }
+
+    *duration_ms = info.duration_ms;
+    return !audio_bytes->empty();
+}

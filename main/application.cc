@@ -21,6 +21,18 @@
 #include <cstring>
 #include <limits>
 
+// DP044B_UNIVERSAL_ACK
+extern "C" bool xiaozhi_care_ack_pending_for_target(const char* target_id);
+extern "C" bool xiaozhi_care_acknowledge_target(const char* target_id);
+extern "C" uint32_t xiaozhi_care_ack_prompt_delay_seconds(void);
+extern "C" uint8_t xiaozhi_care_ack_max_presentations(void);
+
+// DP044B1_3_V2_BRIDGE
+// Mantiene main desacoplado de care-voice, siguiendo el patrón de puentes C
+// que ya usa XiaoZhi Care para ACK y reproducción de recordatorios.
+extern "C" bool xiaozhi_care_ack_prompt_load(std::string* audio_bytes,
+                                              uint32_t* duration_ms);
+
 #define TAG "Application"
 
 // DP039_DIAGNOSTICO_LIMPIO: sólo se retiraron trazas de medición.
@@ -35,6 +47,161 @@ constexpr uint64_t kCareSlowSpeechHardLimitUs = 30000000ULL;
 // Mantener el mensaje del recordatorio visible un tiempo breve y luego
 // devolver el OLED al estado normal. Coincide con el timeout visual WS2812B.
 constexpr uint64_t kCareReminderDisplayTimeoutUs = 12ULL * 1000ULL * 1000ULL;
+
+// DP044A_REMINDER_AUDIO_PRIORITY
+// Breve colchón para que el PCM de la radio se vacíe antes del recordatorio
+// y para no reanudarla inmediatamente al terminar la última muestra de audio.
+constexpr uint64_t kCareReminderAudioPreRollUs = 250ULL * 1000ULL;
+constexpr uint64_t kCareReminderAudioPostRollUs = 350ULL * 1000ULL;
+constexpr int kCareReminderMinVolume = 70;
+
+// DP044B1_4_EXTENDED_ACK_WINDOW
+// La persona dispone de 30 segundos para confirmar el aviso. Dentro de esa
+// ventana aceptamos hasta tres respuestas STT y, si el canal de voz se cierra,
+// XiaoZhi Care puede reabrir automáticamente hasta tres ciclos de escucha.
+constexpr int64_t kCareAckResponseWindowUs = 30LL * 1000LL * 1000LL;
+constexpr uint8_t kCareAckMaxResponseAttempts = 3;
+constexpr uint8_t kCareAckMaxListeningCycles = 3;
+
+// DP044B1_4B_DELAYED_ACK_PROMPT
+// La confirmación no debe interrumpir inmediatamente a la persona.
+// En recordatorios con audio local, el minuto se cuenta desde que termina
+// por completo el aviso (incluido el post-roll de DP044A).
+constexpr int64_t kCareAckPromptDelayUs = 60LL * 1000LL * 1000LL;
+
+std::string NormalizeCareAckText(const std::string& text) {
+    std::string normalized;
+    normalized.reserve(text.size());
+
+    for (size_t i = 0; i < text.size();) {
+        const unsigned char c = static_cast<unsigned char>(text[i]);
+        if (c == 0xC3 && i + 1 < text.size()) {
+            const unsigned char n = static_cast<unsigned char>(text[i + 1]);
+            char replacement = 0;
+            switch (n) {
+                case 0x81: case 0xA1: replacement = 'a'; break;  // Á á
+                case 0x89: case 0xA9: replacement = 'e'; break;  // É é
+                case 0x8D: case 0xAD: replacement = 'i'; break;  // Í í
+                case 0x93: case 0xB3: replacement = 'o'; break;  // Ó ó
+                case 0x9A: case 0xBA: replacement = 'u'; break;  // Ú ú
+                case 0x91: case 0xB1: replacement = 'n'; break;  // Ñ ñ
+                default: break;
+            }
+            if (replacement != 0) {
+                normalized.push_back(replacement);
+                i += 2;
+                continue;
+            }
+        }
+
+        char out = static_cast<char>(c);
+        if (out >= 'A' && out <= 'Z') out = static_cast<char>(out - 'A' + 'a');
+        const bool alnum = (out >= 'a' && out <= 'z') || (out >= '0' && out <= '9');
+        if (alnum) {
+            normalized.push_back(out);
+        } else if (!normalized.empty() && normalized.back() != ' ') {
+            normalized.push_back(' ');
+        }
+        ++i;
+    }
+
+    while (!normalized.empty() && normalized.front() == ' ') normalized.erase(normalized.begin());
+    while (!normalized.empty() && normalized.back() == ' ') normalized.pop_back();
+    return normalized;
+}
+
+bool IsCareAckAffirmativeText(const std::string& text) {
+    const std::string value = NormalizeCareAckText(text);
+
+    // DP044B1_7_CONSERVATIVE_ACK_MATCHER
+    // DP044B1_7A_PLURAL_ACK_VARIANTS
+    // Sólo coincidencias EXACTAS. No usamos aceptación por prefijo de "si":
+    // una frase contaminada por TV/ruido como "si la culpa gracias" debe
+    // seguir siendo rechazada.
+    static constexpr const char* kAffirmative[] = {
+        "si",
+        "si gracias",
+
+        // Respuestas naturales con pronombre, singular.
+        "si lo escuche",
+        "si la escuche",
+        "si ya lo escuche",
+        "si ya la escuche",
+        "lo escuche",
+        "la escuche",
+        "ya lo escuche",
+        "ya la escuche",
+
+        // Variantes plurales observadas en STT, p. ej. "Sí, ya lo escuchamos".
+        "si lo escuchamos",
+        "si la escuchamos",
+        "si ya lo escuchamos",
+        "si ya la escuchamos",
+        "lo escuchamos",
+        "la escuchamos",
+        "ya lo escuchamos",
+        "ya la escuchamos",
+
+        // Respuestas que nombran explícitamente qué se escuchó.
+        "si escuche el recordatorio",
+        "si ya escuche el recordatorio",
+        "escuche el recordatorio",
+        "ya escuche el recordatorio",
+        "si escuchamos el recordatorio",
+        "si ya escuchamos el recordatorio",
+        "escuchamos el recordatorio",
+        "ya escuchamos el recordatorio",
+
+        "si escuche la alarma",
+        "si ya escuche la alarma",
+        "escuche la alarma",
+        "ya escuche la alarma",
+        "si escuchamos la alarma",
+        "si ya escuchamos la alarma",
+        "escuchamos la alarma",
+        "ya escuchamos la alarma",
+
+        "si escuche el aviso",
+        "si ya escuche el aviso",
+        "escuche el aviso",
+        "ya escuche el aviso",
+        "si escuchamos el aviso",
+        "si ya escuchamos el aviso",
+        "escuchamos el aviso",
+        "ya escuchamos el aviso",
+
+        // Confirmaciones cortas ya validadas.
+        "entendido",
+        "recibido",
+        "esta bien",
+        "de acuerdo",
+        "ok",
+        "okay",
+
+        "si se le escucha",
+        "se le escucha",
+        "se escucha la alarma",
+        "si se escucha la alarma",
+        "si le escuche",
+        "si ya le escuche",
+        "si le escuche gracias",
+        "si ya le escuche gracias",
+        "si la escuchamos gracias",
+        "si ya la escuchamos gracias",
+        "oi la alarma",
+        "ya oi la alarma",
+        "si oi la alarma",
+        "si ya oi la alarma",
+        "lo confirmo",
+        "si lo confirmo",
+        // "gracias" solo no confirma recepción: puede pertenecer a una
+        // conversación causada por un reconocimiento STT incorrecto.
+    };
+    for (const char* candidate : kAffirmative) {
+        if (value == candidate) return true;
+    }
+    return false;
+}
 }  // namespace
 
 
@@ -86,6 +253,50 @@ Application::Application() : notify_player_(audio_service_) {
                  "DP-039 failed to create slow speech timer: err=%d",
                  static_cast<int>(slow_timer_err));
     }
+
+    // DP044B1_4_EXTENDED_ACK_WINDOW
+    esp_timer_create_args_t care_ack_response_timer_args = {
+        .callback =
+            [](void* arg) {
+                auto* app = static_cast<Application*>(arg);
+                app->Schedule([app]() { app->HandleCareAckResponseTimeout(); });
+            },
+        .arg = this,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "care_ack_window",
+        .skip_unhandled_events = true,
+    };
+    const esp_err_t care_ack_timer_err =
+        esp_timer_create(&care_ack_response_timer_args,
+                         &care_ack_response_timer_handle_);
+    if (care_ack_timer_err != ESP_OK) {
+        care_ack_response_timer_handle_ = nullptr;
+        ESP_LOGE(TAG,
+                 "DP044B1.4 failed to create ACK response timer: err=%d",
+                 static_cast<int>(care_ack_timer_err));
+    }
+
+    // DP044B1_4B_DELAYED_ACK_PROMPT
+    esp_timer_create_args_t care_ack_prompt_delay_timer_args = {
+        .callback =
+            [](void* arg) {
+                auto* app = static_cast<Application*>(arg);
+                app->Schedule([app]() { app->HandleCareAckPromptDelayElapsed(); });
+            },
+        .arg = this,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "care_ack_delay",
+        .skip_unhandled_events = true,
+    };
+    const esp_err_t care_ack_delay_timer_err =
+        esp_timer_create(&care_ack_prompt_delay_timer_args,
+                         &care_ack_prompt_delay_timer_handle_);
+    if (care_ack_delay_timer_err != ESP_OK) {
+        care_ack_prompt_delay_timer_handle_ = nullptr;
+        ESP_LOGE(TAG,
+                 "DP044B1.4b failed to create ACK prompt delay timer: err=%d",
+                 static_cast<int>(care_ack_delay_timer_err));
+    }
 }
 
 Application::~Application() {
@@ -96,6 +307,32 @@ Application::~Application() {
         esp_timer_stop(care_reminder_display_timer_handle_);
         esp_timer_delete(care_reminder_display_timer_handle_);
         care_reminder_display_timer_handle_ = nullptr;
+    }
+
+    // DP044A_REMINDER_AUDIO_PRIORITY
+    if (care_reminder_audio_pre_timer_handle_ != nullptr) {
+        esp_timer_stop(care_reminder_audio_pre_timer_handle_);
+        esp_timer_delete(care_reminder_audio_pre_timer_handle_);
+        care_reminder_audio_pre_timer_handle_ = nullptr;
+    }
+    if (care_reminder_audio_post_timer_handle_ != nullptr) {
+        esp_timer_stop(care_reminder_audio_post_timer_handle_);
+        esp_timer_delete(care_reminder_audio_post_timer_handle_);
+        care_reminder_audio_post_timer_handle_ = nullptr;
+    }
+
+    // DP044B1_4_EXTENDED_ACK_WINDOW
+    if (care_ack_response_timer_handle_ != nullptr) {
+        esp_timer_stop(care_ack_response_timer_handle_);
+        esp_timer_delete(care_ack_response_timer_handle_);
+        care_ack_response_timer_handle_ = nullptr;
+    }
+
+    // DP044B1_4B_DELAYED_ACK_PROMPT
+    if (care_ack_prompt_delay_timer_handle_ != nullptr) {
+        esp_timer_stop(care_ack_prompt_delay_timer_handle_);
+        esp_timer_delete(care_ack_prompt_delay_timer_handle_);
+        care_ack_prompt_delay_timer_handle_ = nullptr;
     }
 
     CancelSlowSpeechTimer();
@@ -318,7 +555,22 @@ void Application::Run() {
         if (bits & MAIN_EVENT_PLAYBACK_DRAINED) {
             if (audio_service_.IsPlaybackIdle()) {
                 notify_player_.OnPlaybackDrained();
+
+                // DP044A_REMINDER_AUDIO_PRIORITY
+                // El drenado de la cola es la señal autoritativa de que el OGG
+                // local terminó. La radio permanece pausada durante un pequeño
+                // post-roll y sólo entonces se libera.
+                if (care_reminder_audio_active_) {
+                    BeginCareReminderAudioPostRoll();
+                } else if (care_reminder_audio_pending_) {
+                    MaybeStartCareReminderAudio();
+                }
             }
+            // DP044B_UNIVERSAL_ACK
+            // Un aviso sin OGG propio puede estar esperando que termine un beep/TTS
+            // antes de abrir la escucha de confirmación.
+            MaybeStartCareAcknowledgementListening();
+
             // Deferred listening start (auto mode): the playback queue has
             // drained, so it is now safe to enable voice processing.
             if (pending_listening_start_ && GetDeviceState() == kDeviceStateListening &&
@@ -667,6 +919,20 @@ void Application::InitializeProtocol() {
 
     protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
         if (GetDeviceState() == kDeviceStateSpeaking) {
+            // DP044B1_8_ACK_RUNTIME_COHERENCE
+            // No reproducir TTS remoto mientras el aviso siga pendiente.
+            // No abortamos al servidor: todavía puede ejecutar MCP como fallback.
+            const int64_t now_us = esp_timer_get_time();
+            const bool suppress_ack_tts =
+                !care_ack_response_target_.empty() &&
+                care_ack_response_deadline_us_ > 0 &&
+                now_us <= care_ack_response_deadline_us_ &&
+                ::xiaozhi_care_ack_pending_for_target(
+                    care_ack_response_target_.c_str());
+            if (suppress_ack_tts) {
+                return;
+            }
+
             audio_service_.PushPacketToDecodeQueue(std::move(packet));
         }
     });
@@ -703,6 +969,30 @@ void Application::InitializeProtocol() {
         Schedule([this]() {
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
+
+            // DP044B1_4_EXTENDED_ACK_WINDOW
+            // Si el servidor cerró el canal antes de que la persona pudiera
+            // confirmar, reabrimos la escucha sin repetir la pregunta grabada.
+            const int64_t now_us = esp_timer_get_time();
+            if (!care_ack_response_target_.empty() &&
+                care_ack_response_deadline_us_ > 0 &&
+                now_us <= care_ack_response_deadline_us_ &&
+                care_ack_response_attempts_ < kCareAckMaxResponseAttempts &&
+                care_ack_listening_cycles_ < kCareAckMaxListeningCycles &&
+                ::xiaozhi_care_ack_pending_for_target(
+                    care_ack_response_target_.c_str())) {
+                care_ack_listening_requested_ = true;
+                care_ack_listening_target_ = care_ack_response_target_;
+                care_ack_retry_listening_only_ = true;
+                ESP_LOGI(TAG,
+                         "DP044B1.4 ACK listen retry queued: target=%s cycle=%u/%u attempts=%u/%u",
+                         care_ack_response_target_.c_str(),
+                         static_cast<unsigned>(care_ack_listening_cycles_ + 1),
+                         static_cast<unsigned>(kCareAckMaxListeningCycles),
+                         static_cast<unsigned>(care_ack_response_attempts_),
+                         static_cast<unsigned>(kCareAckMaxResponseAttempts));
+            }
+
             SetDeviceState(kDeviceStateIdle);
         });
     });
@@ -770,6 +1060,25 @@ void Application::InitializeProtocol() {
             } else if (strcmp(state->valuestring, "sentence_start") == 0) {
                 auto text = cJSON_GetObjectItem(root, "text");
                 if (cJSON_IsString(text)) {
+                    // DP044B1_8_ACK_ASSISTANT_GUARD
+                    // Una frase remota no puede presentarse como confirmación
+                    // mientras XiaoZhi Care todavía considere pendiente el ACK.
+                    const int64_t now_us = esp_timer_get_time();
+                    const bool suppress_ack_sentence =
+                        !care_ack_response_target_.empty() &&
+                        care_ack_response_deadline_us_ > 0 &&
+                        now_us <= care_ack_response_deadline_us_ &&
+                        ::xiaozhi_care_ack_pending_for_target(
+                            care_ack_response_target_.c_str());
+                    if (suppress_ack_sentence) {
+                        ESP_LOGI(
+                            TAG,
+                            "DP044B1.8 assistant sentence suppressed while ACK pending: target=%s text=%s",
+                            care_ack_response_target_.c_str(),
+                            text->valuestring);
+                        return;
+                    }
+
                     std::vector<TextGlyph> glyphs;
                     uint8_t bpp = 0;
                     if (!TextGlyphPayload::Parse(root, glyphs, bpp)) {
@@ -792,6 +1101,78 @@ void Application::InitializeProtocol() {
                     glyphs.clear();
                 }
                 ESP_LOGI(TAG, ">> %s", text->valuestring);
+
+                // DP044B1_4_EXTENDED_ACK_WINDOW
+                // La pregunta se reproduce localmente. Conservamos el contexto
+                // durante 30 s y aceptamos hasta tres respuestas STT. Un error
+                // de reconocimiento ya no consume toda la oportunidad de ACK.
+                Schedule([this, message = std::string(text->valuestring)]() {
+                    if (care_ack_response_target_.empty()) return;
+
+                    const int64_t now_us = esp_timer_get_time();
+                    const bool in_window = care_ack_response_deadline_us_ > 0 &&
+                                           now_us <= care_ack_response_deadline_us_;
+                    const std::string target = care_ack_response_target_;
+
+                    if (!in_window) {
+                        ESP_LOGI(TAG,
+                                 "DP044B1.4 ACK response ignored after window: target=%s text=%s",
+                                 target.c_str(),
+                                 message.c_str());
+                        ClearCareAckResponseWindow();
+                        return;
+                    }
+
+                    ++care_ack_response_attempts_;
+
+                    if (IsCareAckAffirmativeText(message)) {
+                        ClearCareAckResponseWindow();
+                        const bool acknowledged =
+                            ::xiaozhi_care_acknowledge_target(target.c_str());
+                        ESP_LOGI(TAG,
+                                 "DP044B1 local STT acknowledgement: target=%s acknowledged=%d text=%s",
+                                 target.c_str(),
+                                 acknowledged ? 1 : 0,
+                                 message.c_str());
+
+                        // DP044B2_CONFIG_ACK_AND_VOICE_LED
+                        // Solo mostrar blanco si el runtime realmente aceptó el ACK.
+                        if (acknowledged) {
+                            bool visual_ok = false;
+                            auto* led = Board::GetInstance().GetLed();
+                            if (led != nullptr) {
+                                visual_ok = led->ShowCareAckConfirmation();
+                            }
+                            ESP_LOGI(TAG,
+                                     "DP044B2 voice ACK visual: target=%s visual=%d",
+                                     target.c_str(),
+                                     visual_ok ? 1 : 0);
+                        }
+                        return;
+                    }
+
+                    if (care_ack_response_attempts_ >= kCareAckMaxResponseAttempts) {
+                        ESP_LOGI(TAG,
+                                 "DP044B1.4 ACK responses exhausted: target=%s attempts=%u/%u text=%s",
+                                 target.c_str(),
+                                 static_cast<unsigned>(care_ack_response_attempts_),
+                                 static_cast<unsigned>(kCareAckMaxResponseAttempts),
+                                 message.c_str());
+                        ClearCareAckResponseWindow();
+                        return;
+                    }
+
+                    const int64_t remaining_ms =
+                        (care_ack_response_deadline_us_ - now_us) / 1000LL;
+                    ESP_LOGI(TAG,
+                             "DP044B1 local STT did not acknowledge: target=%s attempt=%u/%u remaining_ms=%lld text=%s",
+                             target.c_str(),
+                             static_cast<unsigned>(care_ack_response_attempts_),
+                             static_cast<unsigned>(kCareAckMaxResponseAttempts),
+                             static_cast<long long>(remaining_ms),
+                             message.c_str());
+                });
+
                 Schedule([display, message = std::string(text->valuestring),
                           glyphs = std::move(glyphs), bpp]() {
                     display->AddTextGlyphs(glyphs, bpp);
@@ -903,6 +1284,158 @@ void Application::ToggleChatState() { xEventGroupSetBits(event_group_, MAIN_EVEN
 void Application::StartListening() { xEventGroupSetBits(event_group_, MAIN_EVENT_START_LISTENING); }
 
 void Application::StopListening() { xEventGroupSetBits(event_group_, MAIN_EVENT_STOP_LISTENING); }
+
+
+// DP044B3_PHYSICAL_ACK
+bool Application::IsCareAlertPendingForPhysicalAck() {
+    std::string target;
+    {
+        std::lock_guard<std::mutex> lock(care_ack_physical_mutex_);
+        target = care_ack_physical_target_;
+    }
+
+    if (target.empty()) {
+        return false;
+    }
+
+    return ::xiaozhi_care_ack_pending_for_target(target.c_str());
+}
+
+void Application::ConfirmPendingCareAlertFromTouch() {
+    Schedule([this]() {
+        std::string target;
+
+        if (!care_ack_response_target_.empty()) {
+            target = care_ack_response_target_;
+        } else if (!care_ack_listening_target_.empty()) {
+            target = care_ack_listening_target_;
+        } else if (!care_ack_prompt_delay_target_.empty()) {
+            target = care_ack_prompt_delay_target_;
+        } else {
+            std::lock_guard<std::mutex> lock(care_ack_physical_mutex_);
+            target = care_ack_physical_target_;
+        }
+
+        if (target.empty()) {
+            ESP_LOGI(TAG, "DP044B3 touch ACK ignored: no Care target available");
+            return;
+        }
+
+        if (!::xiaozhi_care_ack_pending_for_target(target.c_str())) {
+            {
+                std::lock_guard<std::mutex> lock(care_ack_physical_mutex_);
+                if (care_ack_physical_target_ == target) {
+                    care_ack_physical_target_.clear();
+                }
+            }
+            ESP_LOGI(TAG,
+                     "DP044B3 touch ACK ignored: target=%s no longer pending",
+                     target.c_str());
+            return;
+        }
+
+        const bool acknowledged =
+            ::xiaozhi_care_acknowledge_target(target.c_str());
+
+        if (!acknowledged) {
+            ESP_LOGW(TAG, "DP044B3 touch ACK failed: target=%s", target.c_str());
+            return;
+        }
+
+        if (care_ack_listening_target_ == target) {
+            care_ack_listening_requested_ = false;
+            care_ack_listening_target_.clear();
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(care_ack_physical_mutex_);
+            if (care_ack_physical_target_ == target) {
+                care_ack_physical_target_.clear();
+            }
+        }
+
+        care_ack_prompt_active_ = false;
+        care_ack_prompt_audio_cache_.clear();
+        CancelCareAckPromptDelay();
+        ClearCareAckResponseWindow();
+
+        const DeviceState state = GetDeviceState();
+
+        if (state == kDeviceStateSpeaking) {
+            AbortSpeaking(kAbortReasonNone);
+        }
+
+        // DP044B2_1_TOUCH_TEXT_TTS_CONFIRMATION
+        // El ACK ya quedó registrado localmente. Para que la experiencia sea
+        // igual a confirmar por voz, mantenemos o abrimos el canal y enviamos
+        // una entrada textual al agente. No dependemos de esta respuesta para
+        // considerar confirmado el recordatorio.
+        bool agent_reply_requested = false;
+
+        if (protocol_ != nullptr) {
+            if (state == kDeviceStateListening &&
+                protocol_->IsAudioChannelOpened()) {
+                protocol_->SendStopListening();
+            }
+
+            if (state == kDeviceStateListening ||
+                state == kDeviceStateSpeaking ||
+                state == kDeviceStateConnecting) {
+                SetDeviceState(kDeviceStateIdle);
+            }
+
+            if (!protocol_->IsAudioChannelOpened()) {
+                if (SetDeviceState(kDeviceStateConnecting) &&
+                    protocol_->OpenAudioChannel()) {
+                    SetDeviceState(kDeviceStateIdle);
+                } else {
+                    if (GetDeviceState() == kDeviceStateConnecting) {
+                        SetDeviceState(kDeviceStateIdle);
+                    }
+                }
+            }
+
+            if (protocol_->IsAudioChannelOpened()) {
+                // Hace que tts/stop vuelva a idle en lugar de abrir otra ronda
+                // automática de escucha.
+                listening_mode_ = kListeningModeManualStop;
+
+                // DP044B2_1_R3_SHORT_TOUCH_CONFIRMATION
+                // Debe ser una frase breve: el servidor limita listen/detect
+                // a entradas cortas. Replicamos la confirmación verbal real.
+                agent_reply_requested = protocol_->SendTextInput(
+                    "Sí, ya lo escuché.");
+
+                ESP_LOGI(TAG,
+                         "DP044B2.1 touch ACK text sent to XiaoZhi: target=%s sent=%d",
+                         target.c_str(),
+                         agent_reply_requested ? 1 : 0);
+            } else {
+                ESP_LOGW(TAG,
+                         "DP044B2.1 touch ACK confirmed locally but XiaoZhi channel unavailable: target=%s",
+                         target.c_str());
+            }
+        }
+
+        bool visual_ok = false;
+        auto* led = Board::GetInstance().GetLed();
+        if (led != nullptr) {
+            visual_ok = led->ShowCareAckConfirmation();
+        }
+
+        if (!agent_reply_requested &&
+            GetDeviceState() == kDeviceStateIdle &&
+            !care_reminder_audio_reserved_.load()) {
+            xiaozhi_care::radio::RadioService::GetInstance().SetSystemPaused(false);
+        }
+
+        ESP_LOGI(TAG,
+                 "DP044B3 touch ACK confirmed: target=%s acknowledged=1 visual=%d agent_reply=%d",
+                 target.c_str(),
+                 visual_ok ? 1 : 0,
+                 agent_reply_requested ? 1 : 0);
+    });
+}
 
 void Application::HandleToggleChatEvent() {
     auto state = GetDeviceState();
@@ -1123,11 +1656,37 @@ void Application::HandleStateChangedEvent() {
     DeviceState new_state = state_machine_.GetState();
     clock_ticks_ = 0;
 
-    // DP042A_RADIO_MP3_BASE
-    // Sólo suena en idle. Al escuchar/hablar/notificar/conectar,
-    // se descarta el PCM de radio; al volver a idle continúa en vivo.
+    // DP044B1_6_ACK_RUNTIME_SYNC
+    // El ACK puede llegar por MCP aunque el matcher STT local no lo haya
+    // aceptado. Si el runtime ya dejó de tener el aviso pendiente, cerramos
+    // también la ventana local y liberamos el estado de escucha asociado.
+    if (!care_ack_response_target_.empty() &&
+        !::xiaozhi_care_ack_pending_for_target(
+            care_ack_response_target_.c_str())) {
+        const std::string acknowledged_target = care_ack_response_target_;
+        if (care_ack_listening_target_ == acknowledged_target) {
+            care_ack_listening_requested_ = false;
+            care_ack_listening_target_.clear();
+        }
+        care_ack_prompt_active_ = false;
+        care_ack_prompt_audio_cache_.clear();
+        CancelCareAckPromptDelay();
+        ClearCareAckResponseWindow();
+        ESP_LOGI(TAG,
+                 "DP044B1.6 local ACK window closed: target=%s already acknowledged by runtime",
+                 acknowledged_target.c_str());
+    }
+
+    // DP042A_RADIO_MP3_BASE + DP044A_REMINDER_AUDIO_PRIORITY
+    // La radio sólo suena en idle, salvo que XiaoZhi Care haya reservado el
+    // canal de audio para un recordatorio local. Así evitamos un pequeño
+    // "blip" de radio al volver a Idle mientras el recordatorio está pendiente.
+    const bool care_holds_audio =
+        care_reminder_audio_reserved_.load() ||
+        (care_ack_listening_requested_ && !care_ack_prompt_delay_pending_) ||
+        !care_ack_response_target_.empty();
     xiaozhi_care::radio::RadioService::GetInstance()
-        .SetSystemPaused(new_state != kDeviceStateIdle);
+        .SetSystemPaused(new_state != kDeviceStateIdle || care_holds_audio);
     // Any state change invalidates a pending deferred listening start;
     // the Listening case below re-arms it when needed.
     pending_listening_start_ = false;
@@ -1158,6 +1717,13 @@ void Application::HandleStateChangedEvent() {
             }
             audio_service_.EnableVoiceProcessing(false);
             audio_service_.EnableWakeWordDetection(true);
+
+            // DP044A_REMINDER_AUDIO_PRIORITY
+            // Si una solicitud fue aceptada y durante el Schedule() el equipo
+            // quedó ocupado, no la perdemos: se presenta al volver a Idle.
+            MaybeStartCareReminderAudio();
+            // DP044B_UNIVERSAL_ACK
+            MaybeStartCareAcknowledgementListening();
             break;
         case kDeviceStateConnecting:
             display->SetStatus(Lang::Strings::CONNECTING);
@@ -1167,6 +1733,14 @@ void Application::HandleStateChangedEvent() {
         case kDeviceStateListening:
             display->SetStatus(Lang::Strings::LISTENING);
             display->SetEmotion("neutral");
+
+            // DP044B1_2_NATIVE_ACK_CUE
+            // Mientras esperamos la respuesta inmediata al recordatorio,
+            // mantenemos la pregunta visible sin introducir una voz distinta.
+            if (!care_ack_response_target_.empty() &&
+                esp_timer_get_time() <= care_ack_response_deadline_us_) {
+                display->SetChatMessage("system", "¿Escuchaste el recordatorio?");
+            }
 
             // Make sure the audio processor is running
             if (play_popup_on_listening_ || !audio_service_.IsAudioProcessorRunning()) {
@@ -1657,6 +2231,19 @@ bool Application::RequestCareReminderAudio(const std::string& target_id,
         return false;
     }
 
+    // DP044A_REMINDER_AUDIO_PRIORITY
+    // Reservamos una sola presentación local a la vez. El true que devolvemos
+    // significa "aceptado y retenido para presentación", no sólo que Schedule()
+    // fue llamado. Si el estado cambia antes de reproducir, queda pendiente
+    // hasta que el dispositivo vuelva a Idle.
+    bool expected = false;
+    if (!care_reminder_audio_reserved_.compare_exchange_strong(expected, true)) {
+        ESP_LOGW(TAG,
+                 "Care reminder audio deferred because another Care audio is reserved: target=%s",
+                 target_id.c_str());
+        return false;
+    }
+
     std::string audio_copy(reinterpret_cast<const char*>(audio_data), audio_size);
     const std::string safe_message =
         message.empty() ? "Recordatorio" : message;
@@ -1665,83 +2252,677 @@ bool Application::RequestCareReminderAudio(const std::string& target_id,
               target_id,
               safe_message,
               audio = std::move(audio_copy)]() mutable {
-        if (GetDeviceState() != kDeviceStateIdle) {
-            ESP_LOGW(TAG,
-                     "Care reminder audio skipped in main task because device became busy: target=%s",
-                     target_id.c_str());
-            return;
-        }
-
+        care_reminder_audio_target_ = target_id;
+        care_reminder_audio_message_ = safe_message;
         care_reminder_audio_cache_ = std::move(audio);
+        care_reminder_audio_pending_ = true;
 
         ESP_LOGI(TAG,
-                 "Care reminder audio presented: target=%s bytes=%u message=%s",
-                 target_id.c_str(),
-                 static_cast<unsigned>(care_reminder_audio_cache_.size()),
-                 safe_message.c_str());
+                 "DP044A Care reminder reserved: target=%s bytes=%u",
+                 care_reminder_audio_target_.c_str(),
+                 static_cast<unsigned>(care_reminder_audio_cache_.size()));
 
-        Alert("XiaoZhi Care",
-              safe_message.c_str(),
-              "neutral",
-              std::string_view(care_reminder_audio_cache_.data(),
-                               care_reminder_audio_cache_.size()));
-
-        // DP040C_OLED_AUTO_RETURN
-        // El Alert() deja el texto del recordatorio en pantalla. Lo mantenemos
-        // 12 segundos y luego volvemos a STANDBY sólo si XiaoZhi sigue en Idle.
-        // Si la persona empieza a hablar/interactuar, no pisamos esa pantalla.
-        if (care_reminder_display_timer_handle_ == nullptr) {
-            esp_timer_create_args_t timer_args = {
-                .callback = [](void* arg) {
-                    auto* app = static_cast<Application*>(arg);
-                    app->Schedule([app]() {
-                        if (app->GetDeviceState() == kDeviceStateIdle) {
-                            ESP_LOGI(TAG,
-                                     "DP-040C OLED reminder timeout; restoring normal display");
-                            app->DismissAlert();
-                        } else {
-                            ESP_LOGI(TAG,
-                                     "DP-040C OLED reminder timeout ignored because device is busy");
-                        }
-                    });
-                },
-                .arg = this,
-                .dispatch_method = ESP_TIMER_TASK,
-                .name = "care_oled_reminder",
-                .skip_unhandled_events = true,
-            };
-
-            const esp_err_t timer_err =
-                esp_timer_create(&timer_args, &care_reminder_display_timer_handle_);
-
-            if (timer_err != ESP_OK) {
-                care_reminder_display_timer_handle_ = nullptr;
-                ESP_LOGE(TAG,
-                         "DP-040C failed to create OLED reminder timer: err=%d",
-                         static_cast<int>(timer_err));
-            }
-        }
-
-        if (care_reminder_display_timer_handle_ != nullptr) {
-            esp_timer_stop(care_reminder_display_timer_handle_);
-            const esp_err_t start_err =
-                esp_timer_start_once(care_reminder_display_timer_handle_,
-                                     kCareReminderDisplayTimeoutUs);
-
-            if (start_err == ESP_OK) {
-                ESP_LOGI(TAG,
-                         "DP-040C OLED reminder timeout armed: %llu ms",
-                         static_cast<unsigned long long>(
-                             kCareReminderDisplayTimeoutUs / 1000ULL));
-            } else {
-                ESP_LOGE(TAG,
-                         "DP-040C failed to arm OLED reminder timer: err=%d",
-                         static_cast<int>(start_err));
-            }
-        }
+        MaybeStartCareReminderAudio();
     });
 
     return true;
+}
+
+// DP044B_UNIVERSAL_ACK
+bool Application::RequestCareAcknowledgementListening(const std::string& target_id) {
+    if (target_id.empty()) return false;
+
+    Schedule([this, target_id]() {
+        // DP044B3_PHYSICAL_ACK
+        {
+            std::lock_guard<std::mutex> lock(care_ack_physical_mutex_);
+            care_ack_physical_target_ = target_id;
+        }
+        care_ack_listening_target_ = target_id;
+        care_ack_listening_requested_ = true;
+        ClearCareAckResponseWindow();
+
+        ESP_LOGI(TAG,
+                 "DP044B acknowledgement listening reserved: target=%s",
+                 care_ack_listening_target_.c_str());
+
+        // DP044B1_4B_DELAYED_ACK_PROMPT
+        // Con OGG propio esperamos a que FinishCareReminderAudio() marque
+        // realmente el final del aviso. Sin OGG local usamos este momento como
+        // referencia para conservar la misma UX de espera.
+        if (!care_reminder_audio_reserved_.load()) {
+            ArmCareAckPromptDelay(target_id);
+        }
+    });
+    return true;
+}
+
+void Application::CancelCareAckPromptDelay() {
+    if (care_ack_prompt_delay_timer_handle_ != nullptr) {
+        esp_timer_stop(care_ack_prompt_delay_timer_handle_);
+    }
+    care_ack_prompt_delay_pending_ = false;
+    care_ack_prompt_delay_target_.clear();
+}
+
+void Application::ArmCareAckPromptDelay(const std::string& target) {
+    CancelCareAckPromptDelay();
+
+    if (target.empty() ||
+        !::xiaozhi_care_ack_pending_for_target(target.c_str())) {
+        ESP_LOGI(TAG,
+                 "DP044B1.4b ACK delay not armed: target=%s no longer pending",
+                 target.c_str());
+        return;
+    }
+
+    if (care_ack_prompt_delay_timer_handle_ == nullptr) {
+        ESP_LOGW(TAG,
+                 "DP044B1.4b ACK delay timer unavailable; starting confirmation immediately: target=%s",
+                 target.c_str());
+        MaybeStartCareAcknowledgementListening();
+        return;
+    }
+
+    care_ack_prompt_delay_pending_ = true;
+    care_ack_prompt_delay_target_ = target;
+
+    // DP044B2_CONFIG_ACK_AND_VOICE_LED
+    const uint32_t ack_delay_seconds =
+        ::xiaozhi_care_ack_prompt_delay_seconds();
+    const int64_t ack_delay_us =
+        ack_delay_seconds <= 60
+            ? static_cast<int64_t>(ack_delay_seconds) * 1000LL * 1000LL
+            : kCareAckPromptDelayUs;
+
+    if (ack_delay_seconds == 0) {
+        care_ack_prompt_delay_pending_ = false;
+        care_ack_prompt_delay_target_.clear();
+        ESP_LOGI(TAG,
+                 "DP044B2 ACK confirmation delay=0; starting immediately: target=%s",
+                 target.c_str());
+        MaybeStartCareAcknowledgementListening();
+        return;
+    }
+
+    const esp_err_t err =
+        esp_timer_start_once(care_ack_prompt_delay_timer_handle_,
+                             ack_delay_us);
+    if (err != ESP_OK) {
+        care_ack_prompt_delay_pending_ = false;
+        care_ack_prompt_delay_target_.clear();
+        ESP_LOGE(TAG,
+                 "DP044B1.4b failed to arm ACK delay: target=%s err=%d; starting immediately",
+                 target.c_str(),
+                 static_cast<int>(err));
+        MaybeStartCareAcknowledgementListening();
+        return;
+    }
+
+    ESP_LOGI(TAG,
+             "DP044B1.4b ACK confirmation delayed: target=%s delay_ms=%u",
+             target.c_str(),
+             static_cast<unsigned>(ack_delay_seconds * 1000U));
+
+    // Durante este minuto la radio puede volver a sonar si el usuario la tenía
+    // activa. El prompt de confirmación volverá a pausarla antes de reproducirse.
+    if (GetDeviceState() == kDeviceStateIdle &&
+        !care_reminder_audio_reserved_.load()) {
+        xiaozhi_care::radio::RadioService::GetInstance().SetSystemPaused(false);
+    }
+}
+
+void Application::HandleCareAckPromptDelayElapsed() {
+    if (!care_ack_prompt_delay_pending_) return;
+
+    const std::string target = care_ack_prompt_delay_target_;
+    care_ack_prompt_delay_pending_ = false;
+    care_ack_prompt_delay_target_.clear();
+
+    if (!care_ack_listening_requested_ ||
+        care_ack_listening_target_ != target ||
+        !::xiaozhi_care_ack_pending_for_target(target.c_str())) {
+        ESP_LOGI(TAG,
+                 "DP044B1.4b ACK confirmation delay cancelled: target=%s no longer pending",
+                 target.c_str());
+        if (GetDeviceState() == kDeviceStateIdle &&
+            !care_reminder_audio_reserved_.load()) {
+            xiaozhi_care::radio::RadioService::GetInstance().SetSystemPaused(false);
+        }
+        return;
+    }
+
+    ESP_LOGI(TAG,
+             "DP044B1.4b ACK confirmation delay elapsed: target=%s",
+             target.c_str());
+
+    MaybeStartCareAcknowledgementListening();
+}
+
+void Application::ClearCareAckResponseWindow() {
+    if (care_ack_response_timer_handle_ != nullptr) {
+        esp_timer_stop(care_ack_response_timer_handle_);
+    }
+    care_ack_response_target_.clear();
+    care_ack_response_deadline_us_ = 0;
+    care_ack_response_attempts_ = 0;
+    care_ack_listening_cycles_ = 0;
+    care_ack_retry_listening_only_ = false;
+}
+
+void Application::ArmCareAckResponseWindow(const std::string& target) {
+    ClearCareAckResponseWindow();
+
+    care_ack_response_target_ = target;
+    care_ack_response_deadline_us_ =
+        esp_timer_get_time() + kCareAckResponseWindowUs;
+    care_ack_response_attempts_ = 0;
+    care_ack_listening_cycles_ = 1;
+
+    if (care_ack_response_timer_handle_ != nullptr) {
+        esp_timer_start_once(care_ack_response_timer_handle_,
+                             kCareAckResponseWindowUs);
+    }
+
+    ESP_LOGI(TAG,
+             "DP044B1.4 ACK window armed: target=%s window_ms=30000 cycles=1/%u",
+             target.c_str(),
+             static_cast<unsigned>(kCareAckMaxListeningCycles));
+}
+
+void Application::HandleCareAckResponseTimeout() {
+    if (care_ack_response_target_.empty()) return;
+
+    const std::string target = care_ack_response_target_;
+
+    // DP044B1_6_ACK_RUNTIME_SYNC
+    // Guardia final: si MCP confirmó entre el último cambio de estado y el
+    // vencimiento del timer, no informar falsamente "ACK window expired".
+    if (!::xiaozhi_care_ack_pending_for_target(target.c_str())) {
+        if (care_ack_listening_target_ == target) {
+            care_ack_listening_requested_ = false;
+            care_ack_listening_target_.clear();
+        }
+        care_ack_prompt_active_ = false;
+        care_ack_prompt_audio_cache_.clear();
+        CancelCareAckPromptDelay();
+        ClearCareAckResponseWindow();
+        ESP_LOGI(TAG,
+                 "DP044B1.6 ACK timer closed: target=%s already acknowledged by runtime",
+                 target.c_str());
+        return;
+    }
+
+    ESP_LOGI(TAG,
+             "DP044B1.4 ACK window expired: target=%s attempts=%u/%u cycles=%u/%u",
+             target.c_str(),
+             static_cast<unsigned>(care_ack_response_attempts_),
+             static_cast<unsigned>(kCareAckMaxResponseAttempts),
+             static_cast<unsigned>(care_ack_listening_cycles_),
+             static_cast<unsigned>(kCareAckMaxListeningCycles));
+
+    if (care_ack_listening_target_ == target) {
+        care_ack_listening_requested_ = false;
+        care_ack_listening_target_.clear();
+    }
+    CancelCareAckPromptDelay();
+    ClearCareAckResponseWindow();
+
+    if (GetDeviceState() == kDeviceStateIdle &&
+        !care_reminder_audio_reserved_.load()) {
+        xiaozhi_care::radio::RadioService::GetInstance().SetSystemPaused(false);
+    }
+}
+
+bool Application::MaybeStartCareAcknowledgementListening() {
+    if (!care_ack_listening_requested_) return false;
+
+    // DP044B1_4B_DELAYED_ACK_PROMPT
+    if (care_ack_prompt_delay_pending_) return false;
+
+    if (care_ack_listening_target_.empty() ||
+        !::xiaozhi_care_ack_pending_for_target(care_ack_listening_target_.c_str())) {
+        ESP_LOGI(TAG,
+                 "DP044B acknowledgement listening cancelled: target=%s no longer pending",
+                 care_ack_listening_target_.c_str());
+        care_ack_listening_requested_ = false;
+        care_ack_listening_target_.clear();
+        care_ack_prompt_active_ = false;
+        care_ack_prompt_audio_cache_.clear();
+        CancelCareAckPromptDelay();
+        ClearCareAckResponseWindow();
+        if (GetDeviceState() == kDeviceStateIdle &&
+            !care_reminder_audio_reserved_.load()) {
+            xiaozhi_care::radio::RadioService::GetInstance().SetSystemPaused(false);
+        }
+        return false;
+    }
+
+    // Si el OGG de DP044A todavía está reservado, FinishCareReminderAudio()
+    // volverá a intentarlo después del post-roll.
+    if (care_reminder_audio_reserved_.load()) return false;
+    if (GetDeviceState() != kDeviceStateIdle) return false;
+    if (!audio_service_.IsPlaybackIdle()) return false;
+    if (!protocol_) return false;
+
+    const std::string target = care_ack_listening_target_;
+    const ListeningMode mode = GetDefaultListeningMode();
+    const bool retry_listening_only = care_ack_retry_listening_only_;
+
+    // DP044B1_3_USER_ACK_PROMPT
+    // Si la familia cargó una pregunta de confirmación desde Mantenimiento,
+    // la reproducimos completa ANTES de abrir el micrófono. El archivo vive
+    // fuera del índice de los 12 audios de recordatorios.
+    xiaozhi_care::radio::RadioService::GetInstance().SetSystemPaused(true);
+
+    if (retry_listening_only) {
+        // DP044B1_4_EXTENDED_ACK_WINDOW
+        // En reaperturas automáticas no repetimos la pregunta completa; usamos
+        // sólo el cue nativo para indicar que el micrófono vuelve a escuchar.
+        play_popup_on_listening_ = true;
+        ESP_LOGI(TAG,
+                 "DP044B1.4 reopening ACK listening: target=%s cycle=%u/%u",
+                 target.c_str(),
+                 static_cast<unsigned>(care_ack_listening_cycles_ + 1),
+                 static_cast<unsigned>(kCareAckMaxListeningCycles));
+    } else if (care_ack_prompt_active_) {
+        // Llegamos aquí por MAIN_EVENT_PLAYBACK_DRAINED: la pregunta terminó.
+        care_ack_prompt_active_ = false;
+        care_ack_prompt_audio_cache_.clear();
+        ESP_LOGI(TAG,
+                 "DP044B1.3 acknowledgement prompt finished: target=%s",
+                 target.c_str());
+    } else {
+        std::string prompt_audio;
+        uint32_t prompt_duration_ms = 0;
+
+        if (::xiaozhi_care_ack_prompt_load(&prompt_audio,
+                                           &prompt_duration_ms) &&
+            !prompt_audio.empty()) {
+            care_ack_prompt_audio_cache_ = std::move(prompt_audio);
+            care_ack_prompt_active_ = true;
+
+            ESP_LOGI(TAG,
+                     "DP044B1.3 acknowledgement prompt started: target=%s bytes=%u duration_ms=%u",
+                     target.c_str(),
+                     static_cast<unsigned>(care_ack_prompt_audio_cache_.size()),
+                     static_cast<unsigned>(prompt_duration_ms));
+
+            Alert("XiaoZhi Care",
+                  "¿Escuchaste el recordatorio?",
+                  "neutral",
+                  std::string_view(care_ack_prompt_audio_cache_.data(),
+                                   care_ack_prompt_audio_cache_.size()));
+
+            if (!audio_service_.IsPlaybackIdle()) {
+                return true;
+            }
+
+            // Un archivo que no haya producido paquetes no debe bloquear el ACK.
+            ESP_LOGW(TAG,
+                     "DP044B1.3 acknowledgement prompt produced no playback; using native cue: target=%s",
+                     target.c_str());
+            care_ack_prompt_active_ = false;
+            care_ack_prompt_audio_cache_.clear();
+            play_popup_on_listening_ = true;
+        } else {
+            // Sin audio configurado conservamos el fallback seguro de B1.2.
+            play_popup_on_listening_ = true;
+            ESP_LOGW(TAG,
+                     "DP044B1.3 acknowledgement prompt not configured; using native cue: target=%s",
+                     target.c_str());
+        }
+    }
+
+    care_ack_listening_requested_ = false;
+    care_ack_listening_target_.clear();
+    care_ack_retry_listening_only_ = false;
+
+    if (!protocol_->IsAudioChannelOpened()) {
+        if (!SetDeviceState(kDeviceStateConnecting)) {
+            play_popup_on_listening_ = false;
+            care_ack_listening_requested_ = true;
+            care_ack_listening_target_ = target;
+            care_ack_retry_listening_only_ = retry_listening_only;
+            return false;
+        }
+        Schedule([this, mode]() { ContinueOpenAudioChannel(mode); });
+    } else {
+        SetListeningMode(mode);
+        if (GetDeviceState() != kDeviceStateListening) {
+            play_popup_on_listening_ = false;
+            care_ack_listening_requested_ = true;
+            care_ack_listening_target_ = target;
+            care_ack_retry_listening_only_ = retry_listening_only;
+            return false;
+        }
+    }
+
+    if (retry_listening_only) {
+        if (!care_ack_response_target_.empty() &&
+            care_ack_response_target_ == target &&
+            care_ack_listening_cycles_ < kCareAckMaxListeningCycles) {
+            ++care_ack_listening_cycles_;
+        }
+    } else {
+        ArmCareAckResponseWindow(target);
+    }
+
+    ESP_LOGI(TAG,
+             "DP044B acknowledgement listening started: target=%s cycle=%u/%u",
+             target.c_str(),
+             static_cast<unsigned>(care_ack_listening_cycles_),
+             static_cast<unsigned>(kCareAckMaxListeningCycles));
+    return true;
+}
+
+void Application::MaybeStartCareReminderAudio() {
+    if (!care_reminder_audio_reserved_.load() ||
+        !care_reminder_audio_pending_ ||
+        care_reminder_audio_preparing_ ||
+        care_reminder_audio_active_ ||
+        care_reminder_audio_finishing_) {
+        return;
+    }
+
+    if (GetDeviceState() != kDeviceStateIdle) {
+        ESP_LOGI(TAG,
+                 "DP044A Care reminder waiting for Idle: target=%s state=%d",
+                 care_reminder_audio_target_.c_str(),
+                 static_cast<int>(GetDeviceState()));
+        return;
+    }
+
+    if (!audio_service_.IsPlaybackIdle()) {
+        ESP_LOGI(TAG,
+                 "DP044A Care reminder waiting for playback drain: target=%s",
+                 care_reminder_audio_target_.c_str());
+        return;
+    }
+
+    auto& radio = xiaozhi_care::radio::RadioService::GetInstance();
+    radio.SetSystemPaused(true);
+
+    auto codec = Board::GetInstance().GetAudioCodec();
+    care_reminder_previous_volume_ = -1;
+    care_reminder_boosted_volume_ = -1;
+    care_reminder_volume_boosted_ = false;
+
+    if (codec != nullptr) {
+        care_reminder_previous_volume_ = codec->output_volume();
+        const int reminder_volume =
+            care_reminder_previous_volume_ < kCareReminderMinVolume
+                ? kCareReminderMinVolume
+                : care_reminder_previous_volume_;
+
+        if (reminder_volume != care_reminder_previous_volume_) {
+            codec->SetOutputVolume(reminder_volume);
+            care_reminder_boosted_volume_ = reminder_volume;
+            care_reminder_volume_boosted_ = true;
+            ESP_LOGI(TAG,
+                     "DP044A reminder volume boosted: previous=%d reminder=%d",
+                     care_reminder_previous_volume_,
+                     reminder_volume);
+        }
+    }
+
+    care_reminder_audio_preparing_ = true;
+
+    if (care_reminder_audio_pre_timer_handle_ == nullptr) {
+        esp_timer_create_args_t timer_args = {
+            .callback = [](void* arg) {
+                auto* app = static_cast<Application*>(arg);
+                app->Schedule([app]() { app->StartCareReminderAudioNow(); });
+            },
+            .arg = this,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "care_audio_pre",
+            .skip_unhandled_events = true,
+        };
+
+        const esp_err_t timer_err =
+            esp_timer_create(&timer_args, &care_reminder_audio_pre_timer_handle_);
+        if (timer_err != ESP_OK) {
+            care_reminder_audio_pre_timer_handle_ = nullptr;
+            ESP_LOGE(TAG,
+                     "DP044A failed to create pre-roll timer: err=%d; starting immediately",
+                     static_cast<int>(timer_err));
+        }
+    }
+
+    if (care_reminder_audio_pre_timer_handle_ != nullptr) {
+        esp_timer_stop(care_reminder_audio_pre_timer_handle_);
+        const esp_err_t err =
+            esp_timer_start_once(care_reminder_audio_pre_timer_handle_,
+                                 kCareReminderAudioPreRollUs);
+        if (err == ESP_OK) {
+            ESP_LOGI(TAG,
+                     "DP044A radio paused; reminder pre-roll armed: %llu ms target=%s",
+                     static_cast<unsigned long long>(kCareReminderAudioPreRollUs / 1000ULL),
+                     care_reminder_audio_target_.c_str());
+            return;
+        }
+
+        ESP_LOGE(TAG,
+                 "DP044A failed to arm pre-roll timer: err=%d; starting immediately",
+                 static_cast<int>(err));
+    }
+
+    StartCareReminderAudioNow();
+}
+
+void Application::StartCareReminderAudioNow() {
+    if (!care_reminder_audio_reserved_.load() ||
+        !care_reminder_audio_pending_ ||
+        !care_reminder_audio_preparing_) {
+        return;
+    }
+
+    if (GetDeviceState() != kDeviceStateIdle) {
+        ESP_LOGI(TAG,
+                 "DP044A reminder pre-roll interrupted by device activity; keeping pending: target=%s state=%d",
+                 care_reminder_audio_target_.c_str(),
+                 static_cast<int>(GetDeviceState()));
+        care_reminder_audio_preparing_ = false;
+        RestoreCareReminderVolume();
+        return;
+    }
+
+    if (!audio_service_.IsPlaybackIdle()) {
+        ESP_LOGI(TAG,
+                 "DP044A reminder pre-roll found audio busy; keeping pending: target=%s",
+                 care_reminder_audio_target_.c_str());
+        care_reminder_audio_preparing_ = false;
+        RestoreCareReminderVolume();
+        return;
+    }
+
+    care_reminder_audio_preparing_ = false;
+    care_reminder_audio_pending_ = false;
+    care_reminder_audio_active_ = true;
+
+    ESP_LOGI(TAG,
+             "DP044A Care reminder playback started: target=%s bytes=%u message=%s",
+             care_reminder_audio_target_.c_str(),
+             static_cast<unsigned>(care_reminder_audio_cache_.size()),
+             care_reminder_audio_message_.c_str());
+
+    Alert("XiaoZhi Care",
+          care_reminder_audio_message_.c_str(),
+          "neutral",
+          std::string_view(care_reminder_audio_cache_.data(),
+                           care_reminder_audio_cache_.size()));
+
+    // DP040C_OLED_AUTO_RETURN
+    // El Alert() deja el texto del recordatorio en pantalla. Lo mantenemos
+    // 12 segundos y luego volvemos a STANDBY sólo si XiaoZhi sigue en Idle.
+    if (care_reminder_display_timer_handle_ == nullptr) {
+        esp_timer_create_args_t timer_args = {
+            .callback = [](void* arg) {
+                auto* app = static_cast<Application*>(arg);
+                app->Schedule([app]() {
+                    if (app->GetDeviceState() == kDeviceStateIdle) {
+                        ESP_LOGI(TAG,
+                                 "DP-040C OLED reminder timeout; restoring normal display");
+                        app->DismissAlert();
+                    } else {
+                        ESP_LOGI(TAG,
+                                 "DP-040C OLED reminder timeout ignored because device is busy");
+                    }
+                });
+            },
+            .arg = this,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "care_oled_reminder",
+            .skip_unhandled_events = true,
+        };
+
+        const esp_err_t timer_err =
+            esp_timer_create(&timer_args, &care_reminder_display_timer_handle_);
+
+        if (timer_err != ESP_OK) {
+            care_reminder_display_timer_handle_ = nullptr;
+            ESP_LOGE(TAG,
+                     "DP-040C failed to create OLED reminder timer: err=%d",
+                     static_cast<int>(timer_err));
+        }
+    }
+
+    if (care_reminder_display_timer_handle_ != nullptr) {
+        esp_timer_stop(care_reminder_display_timer_handle_);
+        const esp_err_t start_err =
+            esp_timer_start_once(care_reminder_display_timer_handle_,
+                                 kCareReminderDisplayTimeoutUs);
+
+        if (start_err == ESP_OK) {
+            ESP_LOGI(TAG,
+                     "DP-040C OLED reminder timeout armed: %llu ms",
+                     static_cast<unsigned long long>(
+                         kCareReminderDisplayTimeoutUs / 1000ULL));
+        } else {
+            ESP_LOGE(TAG,
+                     "DP-040C failed to arm OLED reminder timer: err=%d",
+                     static_cast<int>(start_err));
+        }
+    }
+
+    // Un OGG inválido podría no agregar ningún paquete y, por lo tanto, no
+    // generar un nuevo evento PLAYBACK_DRAINED. Cerramos el ciclo igualmente.
+    if (audio_service_.IsPlaybackIdle()) {
+        ESP_LOGW(TAG,
+                 "DP044A Care reminder produced no queued playback; finishing safely: target=%s",
+                 care_reminder_audio_target_.c_str());
+        BeginCareReminderAudioPostRoll();
+    }
+}
+
+void Application::BeginCareReminderAudioPostRoll() {
+    if (!care_reminder_audio_active_ || care_reminder_audio_finishing_) {
+        return;
+    }
+
+    care_reminder_audio_active_ = false;
+    care_reminder_audio_finishing_ = true;
+
+    if (care_reminder_audio_post_timer_handle_ == nullptr) {
+        esp_timer_create_args_t timer_args = {
+            .callback = [](void* arg) {
+                auto* app = static_cast<Application*>(arg);
+                app->Schedule([app]() { app->FinishCareReminderAudio(); });
+            },
+            .arg = this,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "care_audio_post",
+            .skip_unhandled_events = true,
+        };
+
+        const esp_err_t timer_err =
+            esp_timer_create(&timer_args, &care_reminder_audio_post_timer_handle_);
+        if (timer_err != ESP_OK) {
+            care_reminder_audio_post_timer_handle_ = nullptr;
+            ESP_LOGE(TAG,
+                     "DP044A failed to create post-roll timer: err=%d; finishing immediately",
+                     static_cast<int>(timer_err));
+        }
+    }
+
+    if (care_reminder_audio_post_timer_handle_ != nullptr) {
+        esp_timer_stop(care_reminder_audio_post_timer_handle_);
+        const esp_err_t err =
+            esp_timer_start_once(care_reminder_audio_post_timer_handle_,
+                                 kCareReminderAudioPostRollUs);
+        if (err == ESP_OK) {
+            ESP_LOGI(TAG,
+                     "DP044A reminder playback drained; post-roll armed: %llu ms target=%s",
+                     static_cast<unsigned long long>(kCareReminderAudioPostRollUs / 1000ULL),
+                     care_reminder_audio_target_.c_str());
+            return;
+        }
+
+        ESP_LOGE(TAG,
+                 "DP044A failed to arm post-roll timer: err=%d; finishing immediately",
+                 static_cast<int>(err));
+    }
+
+    FinishCareReminderAudio();
+}
+
+void Application::RestoreCareReminderVolume() {
+    if (!care_reminder_volume_boosted_) {
+        care_reminder_previous_volume_ = -1;
+        care_reminder_boosted_volume_ = -1;
+        return;
+    }
+
+    auto codec = Board::GetInstance().GetAudioCodec();
+    if (codec != nullptr &&
+        care_reminder_previous_volume_ >= 0 &&
+        codec->output_volume() == care_reminder_boosted_volume_) {
+        codec->SetOutputVolume(care_reminder_previous_volume_);
+        ESP_LOGI(TAG,
+                 "DP044A reminder volume restored: volume=%d",
+                 care_reminder_previous_volume_);
+    } else if (codec != nullptr) {
+        ESP_LOGI(TAG,
+                 "DP044A reminder volume not restored because it changed externally: current=%d expected=%d",
+                 codec->output_volume(),
+                 care_reminder_boosted_volume_);
+    }
+
+    care_reminder_volume_boosted_ = false;
+    care_reminder_previous_volume_ = -1;
+    care_reminder_boosted_volume_ = -1;
+}
+
+void Application::FinishCareReminderAudio() {
+    if (!care_reminder_audio_finishing_) {
+        return;
+    }
+
+    care_reminder_audio_finishing_ = false;
+    RestoreCareReminderVolume();
+
+    ESP_LOGI(TAG,
+             "DP044A Care reminder playback finished: target=%s state=%d",
+             care_reminder_audio_target_.c_str(),
+             static_cast<int>(GetDeviceState()));
+
+    care_reminder_audio_cache_.clear();
+    care_reminder_audio_target_.clear();
+    care_reminder_audio_message_.clear();
+
+    // DP044B_UNIVERSAL_ACK + DP044B1_4B_DELAYED_ACK_PROMPT
+    // Liberamos el audio del recordatorio y dejamos pasar un minuto completo
+    // antes de preguntar si fue escuchado. El conteo comienza aquí: el aviso
+    // local ya terminó físicamente y también finalizó el post-roll de DP044A.
+    care_reminder_audio_reserved_.store(false);
+
+    if (care_ack_listening_requested_ &&
+        !care_ack_listening_target_.empty()) {
+        ArmCareAckPromptDelay(care_ack_listening_target_);
+    } else if (GetDeviceState() == kDeviceStateIdle) {
+        xiaozhi_care::radio::RadioService::GetInstance().SetSystemPaused(false);
+    }
 }
 
 extern "C" bool xiaozhi_care_reminder_audio_notify(
@@ -1763,6 +2944,13 @@ extern "C" bool xiaozhi_care_reminder_audio_notify(
         std::string(safe_message),
         audio_data,
         audio_size);
+}
+
+
+// DP044B_UNIVERSAL_ACK
+extern "C" bool xiaozhi_care_ack_listening_notify(const char* target_id) {
+    if (target_id == nullptr || target_id[0] == '\0') return false;
+    return Application::GetInstance().RequestCareAcknowledgementListening(target_id);
 }
 
 

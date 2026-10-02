@@ -1,5 +1,7 @@
 #include "care_daily/care_alarm_runtime.h"
 
+#include <algorithm>
+#include <cstdio>
 #include <ctime>
 #include <string>
 
@@ -11,6 +13,7 @@
 #include "care_daily/care_alarm_notifier.h"
 #include "care_daily/nvs_routine_execution_repository.h"
 #include "care_daily/nvs_routine_repository.h"
+#include "care_voice/reminder_voice_runtime.h"
 #include "care_voice/voice_recording_store.h"
 
 // DP040B_FASE2_GROUPED_AUDIO_RUNTIME
@@ -108,6 +111,27 @@ std::string Dp040bPillboxAudioTargetKey(const CareRoutine& routine) {
 std::string Dp038PillboxMessage(const CareRoutine& routine) {
     return "Ahora te toca el " +
            Dp038CompartmentPhrase(routine.placement.compartment) + ".";
+}
+
+// DP044B_UNIVERSAL_ACK
+std::string Dp044bAckOccurrence(const std::string& iso_date,
+                                const CareRoutine& routine) {
+    char buffer[32] = {};
+    std::snprintf(buffer,
+                  sizeof(buffer),
+                  "%s|%02u:%02u",
+                  iso_date.c_str(),
+                  static_cast<unsigned>(routine.schedule.time.hour),
+                  static_cast<unsigned>(routine.schedule.time.minute));
+    return std::string(buffer);
+}
+
+void Dp044bAppendUnique(std::vector<std::string>& values,
+                        const std::string& value) {
+    if (value.empty()) return;
+    if (std::find(values.begin(), values.end(), value) == values.end()) {
+        values.push_back(value);
+    }
 }
 
 
@@ -281,11 +305,17 @@ void CareAlarmRuntime::TaskLoop() {
         std::vector<std::string> presentation_group_keys;
         std::vector<std::string> presentation_audio_targets;  // DP-040B Fase 2
         std::vector<unsigned> presentation_group_members;
+        // DP044B_UNIVERSAL_ACK: un acuse por presentación física, con alias
+        // para todos los routine_id que componen un grupo de pastillero.
+        std::vector<std::vector<std::string>> presentation_ack_targets;
+        std::vector<std::string> presentation_ack_occurrences;
 
         presentation_actions.reserve(result.actions.size());
         presentation_group_keys.reserve(result.actions.size());
         presentation_audio_targets.reserve(result.actions.size());
         presentation_group_members.reserve(result.actions.size());
+        presentation_ack_targets.reserve(result.actions.size());
+        presentation_ack_occurrences.reserve(result.actions.size());
 
         unsigned notifiable_actions = 0;
 
@@ -316,6 +346,11 @@ void CareAlarmRuntime::TaskLoop() {
                 presentation_group_keys.emplace_back();
                 presentation_audio_targets.emplace_back();
                 presentation_group_members.push_back(1);
+                presentation_ack_targets.push_back({source_action.routine_id.Str()});
+                presentation_ack_occurrences.push_back(
+                    routine.has_value()
+                        ? Dp044bAckOccurrence(iso_date, routine.value())
+                        : std::string());
                 continue;
             }
 
@@ -336,9 +371,16 @@ void CareAlarmRuntime::TaskLoop() {
 
                 presentation_actions.push_back(grouped);
                 presentation_group_keys.push_back(key);
-                presentation_audio_targets.push_back(
-                    Dp040bPillboxAudioTargetKey(routine.value()));
+                const std::string audio_target =
+                    Dp040bPillboxAudioTargetKey(routine.value());
+                presentation_audio_targets.push_back(audio_target);
                 presentation_group_members.push_back(1);
+
+                std::vector<std::string> ack_targets{source_action.routine_id.Str()};
+                Dp044bAppendUnique(ack_targets, audio_target);
+                presentation_ack_targets.push_back(std::move(ack_targets));
+                presentation_ack_occurrences.push_back(
+                    Dp044bAckOccurrence(iso_date, routine.value()));
                 continue;
             }
 
@@ -358,6 +400,9 @@ void CareAlarmRuntime::TaskLoop() {
 
             grouped.execution_saved =
                 grouped.execution_saved && source_action.execution_saved;
+
+            Dp044bAppendUnique(presentation_ack_targets[existing_index],
+                               source_action.routine_id.Str());
 
             ++presentation_group_members[existing_index];
 
@@ -463,6 +508,19 @@ void CareAlarmRuntime::TaskLoop() {
             const bool fallback_handled = notifier.Notify(notify_action);
             const bool hardware_handled =
                 grouped_audio_handled || fallback_handled;
+
+            // DP044B_UNIVERSAL_ACK
+            // Registrar sólo una presentación que realmente llegó a algún canal
+            // físico. Esto NO crea RoutineExecution::Confirmed ni afirma ingesta.
+            if (hardware_handled &&
+                action_index < presentation_ack_occurrences.size() &&
+                !presentation_ack_occurrences[action_index].empty()) {
+                xiaozhi_care::voice::ReminderVoiceRuntime::GetInstance()
+                    .RegisterPresentation(
+                        presentation_ack_targets[action_index],
+                        presentation_ack_occurrences[action_index],
+                        action.safe_message);
+            }
 
             ESP_LOGI(kTag,
                      "Runtime notifier result: routine=%s hardware_handled=%d visual_requests=%lu sound_requests=%lu voice_requests=%lu",

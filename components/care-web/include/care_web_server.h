@@ -50,8 +50,16 @@ private:
     static esp_err_t HandleMaintenanceRadioStationsGet(httpd_req_t* req);
     static esp_err_t HandleMaintenanceRadioStationsPut(httpd_req_t* req);
     static esp_err_t HandleMaintenanceListeningProfile(httpd_req_t* req);
+    // DP044B2_CONFIG_ACK_AND_VOICE_LED
+    static esp_err_t HandleMaintenanceAckSettings(httpd_req_t* req);
     static esp_err_t HandleMaintenanceClearExecutions(httpd_req_t* req);
     static esp_err_t HandleMaintenanceClearLegacyPillbox(httpd_req_t* req);
+
+    // DP044B1_3_USER_ACK_PROMPT
+    static esp_err_t HandleAcknowledgementPromptGet(httpd_req_t* req);
+    static esp_err_t HandleAcknowledgementPromptPut(httpd_req_t* req);
+    static esp_err_t HandleAcknowledgementPromptAudio(httpd_req_t* req);
+    static esp_err_t HandleAcknowledgementPromptDelete(httpd_req_t* req);
 
     static esp_err_t HandleVoiceRecordingsList(httpd_req_t* req);
     static esp_err_t HandleVoiceRecordingsCreate(httpd_req_t* req);

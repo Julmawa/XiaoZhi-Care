@@ -1,4 +1,5 @@
 #include "care_mcp_service.h"
+#include "care_voice/reminder_voice_runtime.h"
 
 #include <cJSON.h>
 #include <esp_log.h>
@@ -6107,5 +6108,49 @@ std::string CareMcpService::GetLatestNews(const std::string& category) {
     return result;
 }
 
+
+
+// -----------------------------------------------------------------------------
+// DP044B_UNIVERSAL_ACK
+// Acuse de recibo del último aviso. NO equivale a confirmar una actividad ni
+// a afirmar que una medicación fue tomada.
+// -----------------------------------------------------------------------------
+std::string CareMcpService::AcknowledgeLastAlert() {
+    const auto result =
+        xiaozhi_care::voice::ReminderVoiceRuntime::GetInstance().AcknowledgeLatest();
+
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "ok", true);
+    cJSON_AddBoolToObject(root, "acknowledged", result.acknowledged);
+    cJSON_AddStringToObject(root, "source", "xiaozhi_care_ack");
+    cJSON_AddBoolToObject(root, "do_not_infer", true);
+    cJSON_AddBoolToObject(root, "activity_completed", false);
+    cJSON_AddBoolToObject(root, "medication_taken", false);
+
+    if (!result.acknowledged) {
+        cJSON_AddStringToObject(
+            root,
+            "safe_message",
+            "No tengo un aviso reciente pendiente de confirmar.");
+        cJSON_AddStringToObject(
+            root,
+            "instruction",
+            "No inventes una confirmacion. No marques ninguna actividad ni toma como realizada.");
+        return Stringify(root);
+    }
+
+    cJSON_AddStringToObject(root, "target_id", result.target_id.c_str());
+    cJSON_AddStringToObject(root, "occurrence", result.occurrence.c_str());
+    cJSON_AddNumberToObject(root, "attempts", result.attempts);
+    cJSON_AddStringToObject(
+        root,
+        "safe_message",
+        "Perfecto, queda confirmado que escuchaste el aviso.");
+    cJSON_AddStringToObject(
+        root,
+        "instruction",
+        "Este resultado confirma SOLO que el aviso fue recibido. No significa que la actividad se realizo ni que una medicacion fue tomada. No llames care.record_routine_execution ni care.confirm_pillbox_group salvo que el usuario diga expresamente que lo hizo o lo tomo.");
+    return Stringify(root);
+}
 
 }  // namespace xiaozhi_care

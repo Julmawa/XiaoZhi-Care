@@ -48,6 +48,18 @@ public:
     bool Find(const std::string& id, VoiceRecordingInfo& out);
     bool FindByReminder(const std::string& reminder_id, VoiceRecordingInfo& out);
     bool LoadAudio(const std::string& id, std::string& audio_bytes, VoiceRecordingInfo* info = nullptr);
+
+    // DP044B1_3_USER_ACK_PROMPT
+    // Audio universal de confirmación. Es independiente de los 12 audios
+    // asignables y se guarda como /voice/ack_prompt.ogg.
+    bool LoadAcknowledgementPrompt(std::string& audio_bytes,
+                                   VoiceRecordingValidation* info = nullptr);
+    bool SaveAcknowledgementPrompt(const uint8_t* data,
+                                   size_t size,
+                                   VoiceRecordingValidation& saved,
+                                   std::string& error);
+    bool DeleteAcknowledgementPrompt(std::string* error = nullptr);
+
     bool Save(const std::string& label,
               const std::string& text,
               const std::string& reminder_id,

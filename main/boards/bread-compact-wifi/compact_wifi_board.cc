@@ -32,6 +32,7 @@ private:
     Button volume_up_button_;
     Button volume_down_button_;
 
+
     void InitializeDisplayI2c() {
         i2c_master_bus_config_t bus_config = {
             .i2c_port = (i2c_port_t)0,
@@ -101,6 +102,7 @@ private:
     }
 
     void InitializeButtons() {
+        // DP044B3_R3_SINGLE_TOUCH_ACK
         touch_button_.OnClick([this]() {
             auto& app = Application::GetInstance();
 
@@ -108,6 +110,16 @@ private:
                 return;
             }
 
+            // Un toque confirma inmediatamente un aviso pendiente.
+            // Ese mismo toque NO cambia el estado de conversación.
+            if (app.IsCareAlertPendingForPhysicalAck()) {
+                ESP_LOGI(TAG,
+                         "DP044B3-r3 TTP223 single-touch ACK requested");
+                app.ConfirmPendingCareAlertFromTouch();
+                return;
+            }
+
+            // Sin aviso pendiente, se conserva el comportamiento original.
             app.ToggleChatState();
         });
 

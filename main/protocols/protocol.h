@@ -65,6 +65,9 @@ public:
     virtual bool IsAudioChannelOpened() const = 0;
     virtual bool SendAudio(std::unique_ptr<AudioStreamPacket> packet) = 0;
     virtual void SendWakeWordDetected(const std::string& wake_word);
+    // DP044B2_1_TOUCH_TEXT_TTS_CONFIRMATION
+    // Entrada textual al agente usando el canal listen/detect de XiaoZhi.
+    virtual bool SendTextInput(const std::string& text);
     virtual void SendStartListening(ListeningMode mode);
     virtual void SendStopListening();
     virtual void SendAbortSpeaking(AbortReason reason);

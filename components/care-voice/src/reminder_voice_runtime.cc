@@ -1,5 +1,6 @@
 ﻿#include "care_voice/reminder_voice_runtime.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <ctime>
@@ -7,6 +8,7 @@
 #include <utility>
 
 #include <esp_log.h>
+#include <nvs.h>
 
 #include "care_manager.h"
 #include "care_models.h"
@@ -34,14 +36,118 @@ extern "C" bool __attribute__((weak)) xiaozhi_care_reminder_audio_notify(
     return false;
 }
 
+// DP044B_UNIVERSAL_ACK
+// Hook opcional hacia Application para abrir una escucha breve tras presentar
+// un aviso. Se mantiene weak para no crear una dependencia care-voice -> main.
+extern "C" bool __attribute__((weak)) xiaozhi_care_ack_listening_notify(
+    const char* target_id) {
+    (void)target_id;
+    return false;
+}
+
 namespace {
 
 constexpr char kTag[] = "CARE_REMINDER_VOICE";
 constexpr time_t kMinTrustedEpoch = 1704067200;  // 2024-01-01 UTC
 constexpr uint32_t kTickIntervalMs = 10000;
 constexpr int kGraceSeconds = 120;
+constexpr int kAckResponseWindowSeconds = 600;
+constexpr size_t kMaxAckEntries = 32;
 constexpr uint32_t kTaskStackBytes = 6144;
 constexpr UBaseType_t kTaskPriority = 4;
+
+
+// DP044B2_CONFIG_ACK_AND_VOICE_LED
+constexpr char kAckSettingsNamespace[] = "care_ack";
+constexpr char kAckDelaySecondsKey[] = "delay_s";
+constexpr char kAckMaxPresentationsKey[] = "max_show";
+constexpr uint8_t kAckDefaultDelaySeconds = 60;
+
+uint8_t ReadCareAckSettingU8(const char* key,
+                             uint8_t fallback,
+                             uint8_t min_value,
+                             uint8_t max_value) {
+    nvs_handle_t handle = 0;
+    const esp_err_t open_err =
+        nvs_open(kAckSettingsNamespace, NVS_READONLY, &handle);
+    if (open_err != ESP_OK) {
+        return fallback;
+    }
+
+    uint8_t value = fallback;
+    const esp_err_t get_err = nvs_get_u8(handle, key, &value);
+    nvs_close(handle);
+
+    if (get_err != ESP_OK || value < min_value || value > max_value) {
+        return fallback;
+    }
+    return value;
+}
+
+uint8_t CareAckPromptDelaySeconds() {
+    return ReadCareAckSettingU8(
+        kAckDelaySecondsKey, kAckDefaultDelaySeconds, 0, 60);
+}
+
+uint8_t CareAckMaxPresentations() {
+    return ReadCareAckSettingU8(
+        kAckMaxPresentationsKey,
+        3,
+        1,
+        3);
+}
+
+bool SaveCareAckSettings(uint8_t delay_seconds,
+                         uint8_t max_presentations) {
+    if (delay_seconds > 60 ||
+        max_presentations < 1 ||
+        max_presentations > 3) {
+        return false;
+    }
+
+    // DP044B2_1_TOUCH_TEXT_TTS_CONFIRMATION
+    // Guard idempotente: no desgastar NVS ni generar una segunda escritura
+    // cuando llegan exactamente los mismos valores.
+    if (CareAckPromptDelaySeconds() == delay_seconds &&
+        CareAckMaxPresentations() == max_presentations) {
+        ESP_LOGI(kTag,
+                 "DP044B2.1 ACK settings unchanged; NVS write skipped: delay_s=%u max_presentations=%u",
+                 static_cast<unsigned>(delay_seconds),
+                 static_cast<unsigned>(max_presentations));
+        return true;
+    }
+
+    nvs_handle_t handle = 0;
+    esp_err_t err =
+        nvs_open(kAckSettingsNamespace, NVS_READWRITE, &handle);
+    if (err == ESP_OK) {
+        err = nvs_set_u8(handle, kAckDelaySecondsKey, delay_seconds);
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_u8(handle,
+                         kAckMaxPresentationsKey,
+                         max_presentations);
+    }
+    if (err == ESP_OK) {
+        err = nvs_commit(handle);
+    }
+    if (handle != 0) {
+        nvs_close(handle);
+    }
+
+    if (err != ESP_OK) {
+        ESP_LOGE(kTag,
+                 "DP044B2 failed to save ACK settings: err=%s",
+                 esp_err_to_name(err));
+        return false;
+    }
+
+    ESP_LOGI(kTag,
+             "DP044B2 ACK settings saved: delay_s=%u max_presentations=%u",
+             static_cast<unsigned>(delay_seconds),
+             static_cast<unsigned>(max_presentations));
+    return true;
+}
 
 // DP040C_FASE1B_REMINDER_VISUAL
 // Valores compatibles con CareVisualPattern / CareAlertColor:
@@ -189,6 +295,253 @@ void ReminderVoiceRuntime::Run() {
     }
 }
 
+// DP044B_UNIVERSAL_ACK
+void ReminderVoiceRuntime::RegisterPresentation(
+    const std::vector<std::string>& target_ids,
+    const std::string& occurrence,
+    const std::string& message,
+    std::time_t presented_at) {
+    if (target_ids.empty() || occurrence.empty()) {
+        return;
+    }
+
+    if (presented_at <= 0) {
+        presented_at = std::time(nullptr);
+    }
+
+    std::string listen_target;
+    uint8_t attempts = 0;
+    {
+        std::lock_guard<std::mutex> lock(ack_mutex_);
+
+        AckEntry* entry = nullptr;
+        for (auto& candidate : ack_entries_) {
+            if (candidate.occurrence != occurrence) continue;
+
+            bool same_target = false;
+            for (const auto& requested : target_ids) {
+                if (std::find(candidate.target_ids.begin(),
+                              candidate.target_ids.end(),
+                              requested) != candidate.target_ids.end()) {
+                    same_target = true;
+                    break;
+                }
+            }
+            if (same_target) {
+                entry = &candidate;
+                break;
+            }
+        }
+
+        if (entry == nullptr) {
+            if (ack_entries_.size() >= kMaxAckEntries) {
+                auto oldest = std::min_element(
+                    ack_entries_.begin(), ack_entries_.end(),
+                    [](const AckEntry& a, const AckEntry& b) {
+                        return a.sequence < b.sequence;
+                    });
+                if (oldest != ack_entries_.end()) {
+                    ack_entries_.erase(oldest);
+                }
+            }
+
+            AckEntry created;
+            created.target_ids = target_ids;
+            created.occurrence = occurrence;
+            created.message = message;
+            ack_entries_.push_back(std::move(created));
+            entry = &ack_entries_.back();
+        } else {
+            for (const auto& requested : target_ids) {
+                if (!requested.empty() &&
+                    std::find(entry->target_ids.begin(),
+                              entry->target_ids.end(),
+                              requested) == entry->target_ids.end()) {
+                    entry->target_ids.push_back(requested);
+                }
+            }
+            if (!message.empty()) {
+                entry->message = message;
+            }
+        }
+
+        if (entry->acknowledged || entry->attempts >= CareAckMaxPresentations()) {
+            return;
+        }
+
+        ++entry->attempts;
+        entry->last_presented_at = presented_at;
+        entry->sequence = ++ack_sequence_;
+        attempts = entry->attempts;
+        listen_target = entry->target_ids.empty() ? std::string() : entry->target_ids.front();
+    }
+
+    ESP_LOGI(kTag,
+             "DP044B alert presented: target=%s occurrence=%s attempt=%u/%u",
+             listen_target.c_str(),
+             occurrence.c_str(),
+             static_cast<unsigned>(attempts),
+             static_cast<unsigned>(CareAckMaxPresentations()));
+
+    if (!listen_target.empty()) {
+        const bool listening_requested =
+            ::xiaozhi_care_ack_listening_notify(listen_target.c_str());
+        ESP_LOGI(kTag,
+                 "DP044B acknowledgement listening requested: target=%s accepted=%d",
+                 listen_target.c_str(),
+                 listening_requested ? 1 : 0);
+    }
+}
+
+ReminderAckState ReminderVoiceRuntime::GetAcknowledgementState(
+    const std::string& target_id,
+    const std::string& occurrence) const {
+    ReminderAckState state;
+    if (target_id.empty() || occurrence.empty()) return state;
+
+    std::lock_guard<std::mutex> lock(ack_mutex_);
+    for (const auto& entry : ack_entries_) {
+        if (entry.occurrence != occurrence) continue;
+        if (std::find(entry.target_ids.begin(), entry.target_ids.end(), target_id) ==
+            entry.target_ids.end()) {
+            continue;
+        }
+
+        state.found = true;
+        state.acknowledged = entry.acknowledged;
+        state.attempts = entry.attempts;
+        state.last_presented_at = entry.last_presented_at;
+        return state;
+    }
+    return state;
+}
+
+bool ReminderVoiceRuntime::IsRetryDue(const std::string& target_id,
+                                      const std::string& occurrence,
+                                      std::time_t now) const {
+    const ReminderAckState state = GetAcknowledgementState(target_id, occurrence);
+    if (!state.found || state.acknowledged || state.attempts >= CareAckMaxPresentations()) {
+        return false;
+    }
+    if (now <= 0) now = std::time(nullptr);
+    if (state.last_presented_at <= 0 || now <= 0) return false;
+    return now - state.last_presented_at >= static_cast<std::time_t>(kAckRetrySeconds);
+}
+
+bool ReminderVoiceRuntime::HasPendingTarget(const std::string& target_id) const {
+    if (target_id.empty()) return false;
+    const std::time_t now = std::time(nullptr);
+
+    std::lock_guard<std::mutex> lock(ack_mutex_);
+    for (const auto& entry : ack_entries_) {
+        if (entry.acknowledged || entry.attempts == 0 || entry.last_presented_at <= 0) continue;
+        if (std::find(entry.target_ids.begin(), entry.target_ids.end(), target_id) ==
+            entry.target_ids.end()) {
+            continue;
+        }
+        if (now > 0 &&
+            now - entry.last_presented_at > static_cast<std::time_t>(kAckResponseWindowSeconds)) {
+            continue;
+        }
+        return true;
+    }
+    return false;
+}
+
+ReminderAckResult ReminderVoiceRuntime::AcknowledgeTarget(const std::string& target_id) {
+    ReminderAckResult result;
+    if (target_id.empty()) return result;
+
+    const std::time_t now = std::time(nullptr);
+    std::lock_guard<std::mutex> lock(ack_mutex_);
+
+    AckEntry* latest = nullptr;
+    for (auto& entry : ack_entries_) {
+        if (entry.attempts == 0 || entry.last_presented_at <= 0) continue;
+        if (std::find(entry.target_ids.begin(), entry.target_ids.end(), target_id) ==
+            entry.target_ids.end()) {
+            continue;
+        }
+        if (now > 0 &&
+            now - entry.last_presented_at > static_cast<std::time_t>(kAckResponseWindowSeconds)) {
+            continue;
+        }
+        if (latest == nullptr || entry.sequence > latest->sequence) {
+            latest = &entry;
+        }
+    }
+
+    if (latest == nullptr) return result;
+
+    if (!latest->acknowledged) {
+        latest->acknowledged = true;
+        latest->sequence = ++ack_sequence_;
+        ESP_LOGI(kTag,
+                 "DP044B alert acknowledged locally: target=%s occurrence=%s attempts=%u",
+                 target_id.c_str(),
+                 latest->occurrence.c_str(),
+                 static_cast<unsigned>(latest->attempts));
+    }
+
+    result.acknowledged = true;
+    result.target_id = target_id;
+    result.occurrence = latest->occurrence;
+    result.message = latest->message;
+    result.attempts = latest->attempts;
+    return result;
+}
+
+ReminderAckResult ReminderVoiceRuntime::AcknowledgeLatest() {
+    ReminderAckResult result;
+    const std::time_t now = std::time(nullptr);
+
+    std::lock_guard<std::mutex> lock(ack_mutex_);
+    AckEntry* latest = nullptr;
+    for (auto& entry : ack_entries_) {
+        if (entry.acknowledged || entry.attempts == 0 || entry.last_presented_at <= 0) continue;
+        if (now > 0 &&
+            now - entry.last_presented_at > static_cast<std::time_t>(kAckResponseWindowSeconds)) {
+            continue;
+        }
+        if (latest == nullptr || entry.sequence > latest->sequence) {
+            latest = &entry;
+        }
+    }
+
+    if (latest == nullptr) {
+        // Idempotencia: si el STT local ya cerró el aviso y el LLM igualmente
+        // llama care.acknowledge_last_alert unos milisegundos después, devolvemos
+        // el último acuse reciente como éxito en vez de contradecirlo.
+        for (auto& entry : ack_entries_) {
+            if (!entry.acknowledged || entry.attempts == 0 || entry.last_presented_at <= 0) continue;
+            if (now > 0 &&
+                now - entry.last_presented_at > static_cast<std::time_t>(kAckResponseWindowSeconds)) {
+                continue;
+            }
+            if (latest == nullptr || entry.sequence > latest->sequence) {
+                latest = &entry;
+            }
+        }
+        if (latest == nullptr) return result;
+    } else {
+        latest->acknowledged = true;
+        latest->sequence = ++ack_sequence_;
+    }
+
+    result.acknowledged = true;
+    result.target_id = latest->target_ids.empty() ? std::string() : latest->target_ids.front();
+    result.occurrence = latest->occurrence;
+    result.message = latest->message;
+    result.attempts = latest->attempts;
+
+    ESP_LOGI(kTag,
+             "DP044B alert acknowledged: target=%s occurrence=%s attempts=%u",
+             result.target_id.c_str(),
+             result.occurrence.c_str(),
+             static_cast<unsigned>(result.attempts));
+    return result;
+}
+
 void ReminderVoiceRuntime::Tick() {
     std::tm local_tm{};
     time_t now = 0;
@@ -234,11 +587,20 @@ void ReminderVoiceRuntime::Tick() {
 
         const int due_seconds = due_hour * 3600 + due_minute * 60;
         const int delta_seconds = now_seconds - due_seconds;
-        if (delta_seconds < 0 || delta_seconds > kGraceSeconds) continue;
+        if (delta_seconds < 0) continue;
 
         const std::string occurrence = today + "|" + reminder.time;
-        const auto fired = last_fired_occurrence_.find(reminder.id);
-        if (fired != last_fired_occurrence_.end() && fired->second == occurrence) continue;
+        const ReminderAckState ack =
+            GetAcknowledgementState(reminder.id, occurrence);
+
+        if (!ack.found) {
+            // Conservamos la ventana original para el PRIMER aviso. Los reintentos
+            // posteriores pertenecen a DP044B y pueden ocurrir fuera de esos 120 s.
+            if (delta_seconds > kGraceSeconds) continue;
+        } else {
+            if (ack.acknowledged || ack.attempts >= kAckMaxAttempts) continue;
+            if (!IsRetryDue(reminder.id, occurrence, now)) continue;
+        }
 
         std::string audio;
         VoiceRecordingInfo loaded;
@@ -267,7 +629,7 @@ void ReminderVoiceRuntime::Tick() {
             continue;
         }
 
-        last_fired_occurrence_[reminder.id] = occurrence;
+        RegisterPresentation({reminder.id}, occurrence, message, now);
         ESP_LOGI(kTag,
                  "Reminder audio accepted: reminder=%s recording=%s bytes=%u occurrence=%s",
                  reminder.id.c_str(),
@@ -300,5 +662,38 @@ void ReminderVoiceRuntime::Tick() {
 }
 
 }  // namespace xiaozhi_care::voice
+
+// DP044B_UNIVERSAL_ACK
+// DP044B2_CONFIG_ACK_AND_VOICE_LED
+extern "C" uint32_t xiaozhi_care_ack_prompt_delay_seconds(void) {
+    return static_cast<uint32_t>(CareAckPromptDelaySeconds());
+}
+
+extern "C" uint8_t xiaozhi_care_ack_max_presentations(void) {
+    return CareAckMaxPresentations();
+}
+
+extern "C" bool xiaozhi_care_ack_settings_set(uint32_t delay_seconds,
+                                               uint8_t max_presentations) {
+    if (delay_seconds > 60) {
+        return false;
+    }
+    return SaveCareAckSettings(static_cast<uint8_t>(delay_seconds),
+                               max_presentations);
+}
+
+
+extern "C" bool xiaozhi_care_ack_pending_for_target(const char* target_id) {
+    if (target_id == nullptr || target_id[0] == '\0') return false;
+    return xiaozhi_care::voice::ReminderVoiceRuntime::GetInstance()
+        .HasPendingTarget(target_id);
+}
+
+extern "C" bool xiaozhi_care_acknowledge_target(const char* target_id) {
+    if (target_id == nullptr || target_id[0] == '\0') return false;
+    return xiaozhi_care::voice::ReminderVoiceRuntime::GetInstance()
+        .AcknowledgeTarget(target_id)
+        .acknowledged;
+}
 
 

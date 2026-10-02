@@ -6,6 +6,9 @@ public:
     virtual ~Led() = default;
     // Set the led state based on the device state
     virtual void OnStateChanged() = 0;
+
+    // DP044B3_ACK_VISUAL
+    virtual bool ShowCareAckConfirmation() { return false; }
 };
 
 

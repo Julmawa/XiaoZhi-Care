@@ -9,4 +9,5 @@ idf_component_register(
         cjson
         vfs
         freertos
+        nvs_flash
 )

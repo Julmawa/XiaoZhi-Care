@@ -252,24 +252,64 @@ bool SingleLed::ShowCareAlert(int visual_pattern, int visual_color, const char* 
     return true;
 }
 
+// DP044B3_ACK_VISUAL
+bool SingleLed::ShowCareAckConfirmation() {
+    if (led_strip_ == nullptr) {
+        ESP_LOGW(TAG, "DP044B3 ACK visual ignored: LED strip is not initialized");
+        return false;
+    }
+
+    care_alert_active_.store(true);
+    care_ack_confirmation_active_.store(true);
+
+    // Blanco cálido: distinto de escuchar=verde, hablar=azul,
+    // recordatorio cotidiano=violeta y pastillero=ámbar.
+    SetColor(HIGH_BRIGHTNESS,
+             static_cast<uint8_t>((HIGH_BRIGHTNESS * 3) / 4),
+             static_cast<uint8_t>(HIGH_BRIGHTNESS / 3));
+    TurnOn();
+
+    if (care_alert_timer_ != nullptr) {
+        esp_timer_stop(care_alert_timer_);
+        esp_timer_start_once(care_alert_timer_, 1500ULL * 1000ULL);
+    }
+
+    ESP_LOGI(TAG,
+             "DP044B3 ACK visual confirmation: warm_white duration_ms=1500 leds=%d",
+             LED_COUNT);
+    return true;
+}
+
+
 void SingleLed::ClearCareAlert() {
+    const bool ack_was_active =
+        care_ack_confirmation_active_.exchange(false);
     const bool was_active = care_alert_active_.exchange(false);
     if (care_alert_timer_ != nullptr) {
         esp_timer_stop(care_alert_timer_);
     }
 
-    if (was_active) {
+    if (was_active || ack_was_active) {
         ESP_LOGI(TAG, "DP-040C Care visual cleared; restoring XiaoZhi state");
         OnStateChanged();
     }
 }
 
 void SingleLed::OnCareAlertTimeout() {
-    if (!care_alert_active_.exchange(false)) {
+    const bool ack_was_active =
+        care_ack_confirmation_active_.exchange(false);
+    const bool alert_was_active = care_alert_active_.exchange(false);
+    if (!alert_was_active && !ack_was_active) {
         return;
     }
 
-    ESP_LOGI(TAG, "DP-040C Care visual timeout; restoring XiaoZhi state");
+    if (ack_was_active) {
+        ESP_LOGI(TAG,
+                 "DP044B2 ACK visual timeout; restoring XiaoZhi state");
+    } else {
+        ESP_LOGI(TAG,
+                 "DP-040C Care visual timeout; restoring XiaoZhi state");
+    }
     OnStateChanged();
 }
 
@@ -277,6 +317,11 @@ void SingleLed::OnCareAlertTimeout() {
 void SingleLed::OnStateChanged() {
     auto& app = Application::GetInstance();
     auto device_state = app.GetDeviceState();
+
+    // DP044B2_CONFIG_ACK_AND_VOICE_LED
+    if (care_ack_confirmation_active_.load()) {
+        return;
+    }
 
     // DP040C_FASE1_CARE_VISUAL_OVERLAY
     // La alarma visual conserva prioridad durante Notifying/Idle.

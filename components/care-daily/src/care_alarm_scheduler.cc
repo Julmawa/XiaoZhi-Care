@@ -1,10 +1,13 @@
 #include "care_daily/care_alarm_scheduler.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <string>
 #include <vector>
 
 #include <esp_log.h>
+
+#include "care_voice/reminder_voice_runtime.h"
 
 namespace xiaozhi_care::daily {
 namespace {
@@ -21,6 +24,18 @@ bool IsSameIndication(const RoutineExecution& execution,
     return execution.routine_id == routine_id &&
            execution.iso_date == iso_date &&
            execution.event == RoutineExecutionEvent::Indicated;
+}
+
+// DP044B_UNIVERSAL_ACK
+std::string AckOccurrence(const std::string& iso_date, const DailyTime& time) {
+    char buffer[32] = {};
+    std::snprintf(buffer,
+                  sizeof(buffer),
+                  "%s|%02u:%02u",
+                  iso_date.c_str(),
+                  static_cast<unsigned>(time.hour),
+                  static_cast<unsigned>(time.minute));
+    return std::string(buffer);
 }
 
 }  // namespace
@@ -146,10 +161,6 @@ CareAlarmSchedulerResult CareAlarmScheduler::TickInternal(const std::vector<Care
     const std::vector<RoutineEvaluation> evaluations = engine_.EvaluateAll(routines, context);
 
     for (const RoutineEvaluation& evaluation : evaluations) {
-        if (!evaluation.IsDue()) {
-            continue;
-        }
-
         auto routine_it = std::find_if(routines.begin(), routines.end(), [&](const CareRoutine& routine) {
             return routine.id == evaluation.routine_id;
         });
@@ -163,6 +174,36 @@ CareAlarmSchedulerResult CareAlarmScheduler::TickInternal(const std::vector<Care
             continue;
         }
 
+        // DP044B_UNIVERSAL_ACK
+        // Un reintento pendiente por falta de acuse puede continuar fuera de la
+        // ventana normal de la rutina. Paused/Archived/Invalid nunca se fuerzan.
+        const std::string ack_occurrence = AckOccurrence(iso_date, routine.schedule.time);
+        auto& ack_runtime = xiaozhi_care::voice::ReminderVoiceRuntime::GetInstance();
+        const auto ack_state = ack_runtime.GetAcknowledgementState(
+            routine.id.Str(), ack_occurrence);
+        const bool ack_retry_due =
+            ack_state.found && !ack_state.acknowledged &&
+            ack_state.attempts < xiaozhi_care::voice::ReminderVoiceRuntime::kAckMaxAttempts &&
+            ack_runtime.IsRetryDue(routine.id.Str(), ack_occurrence);
+
+        std::string action_safe_message = evaluation.safe_message;
+        if (!evaluation.IsDue()) {
+            if (evaluation.status != RoutineDueStatus::NotDue || !ack_retry_due) {
+                continue;
+            }
+
+            // Fuera de la ventana normal, reconstruimos el mismo mensaje seguro
+            // evaluando determinísticamente la rutina en su horario programado.
+            RoutineEvaluationContext scheduled_context = context;
+            scheduled_context.now = routine.schedule.time;
+            const RoutineEvaluation scheduled_evaluation =
+                engine_.Evaluate(routine, scheduled_context);
+            if (!scheduled_evaluation.IsDue()) {
+                continue;
+            }
+            action_safe_message = scheduled_evaluation.safe_message;
+        }
+
         ++result.due_count;
         if (!routine.alert.IsValid() || !routine.alert.IsEnabled()) {
             ++result.suppressed_count;
@@ -174,17 +215,31 @@ CareAlarmSchedulerResult CareAlarmScheduler::TickInternal(const std::vector<Care
             continue;
         }
 
-        const uint8_t indicated_count = CountIndicatedToday(routine.id, iso_date);
-        if (indicated_count >= routine.alert.max_repeats) {
-            ++result.suppressed_count;
-            continue;
-        }
+        if (ack_state.found) {
+            const uint8_t ack_limit = std::min<uint8_t>(
+                routine.alert.max_repeats,
+                xiaozhi_care::voice::ReminderVoiceRuntime::kAckMaxAttempts);
 
-        bool found_last = false;
-        const DailyTime last = LastIndicatedTimeToday(routine.id, iso_date, found_last);
-        if (found_last && MinutesDiff(context.now, last) < static_cast<int>(routine.alert.repeat_minutes)) {
-            ++result.suppressed_count;
-            continue;
+            if (ack_state.acknowledged || ack_state.attempts >= ack_limit || !ack_retry_due) {
+                ++result.suppressed_count;
+                continue;
+            }
+        } else {
+            // Antes de la primera presentación física conservamos exactamente
+            // la política histórica de la rutina.
+            const uint8_t indicated_count = CountIndicatedToday(routine.id, iso_date);
+            if (indicated_count >= routine.alert.max_repeats) {
+                ++result.suppressed_count;
+                continue;
+            }
+
+            bool found_last = false;
+            const DailyTime last = LastIndicatedTimeToday(routine.id, iso_date, found_last);
+            if (found_last &&
+                MinutesDiff(context.now, last) < static_cast<int>(routine.alert.repeat_minutes)) {
+                ++result.suppressed_count;
+                continue;
+            }
         }
 
         CareAlarmAction action;

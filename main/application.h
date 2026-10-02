@@ -12,6 +12,7 @@
 #include <memory>
 #include <functional>
 #include <cstdint>
+#include <atomic>
 #include <vector>
 
 #include "protocol.h"
@@ -110,6 +111,10 @@ public:
      */
     void StopListening();
 
+    // DP044B3_PHYSICAL_ACK
+    bool IsCareAlertPendingForPhysicalAck();
+    void ConfirmPendingCareAlertFromTouch();
+
     void Reboot();
     void WakeWordInvoke(const std::string& wake_word);
     bool UpgradeFirmware(const std::string& url, const std::string& version = "");
@@ -127,6 +132,12 @@ public:
                                   const std::string& message,
                                   const uint8_t* audio_data,
                                   size_t audio_size);
+
+    // DP044B_UNIVERSAL_ACK
+    // Solicita una escucha breve para que la persona pueda acusar recibo del
+    // último aviso. No confirma que haya realizado ninguna actividad.
+    bool RequestCareAcknowledgementListening(const std::string& target_id);
+
     AudioService& GetAudioService() { return audio_service_; }
     
     /**
@@ -148,6 +159,51 @@ private:
     esp_timer_handle_t slow_speech_timer_handle_ = nullptr;  // DP-039
     // DP040C_OLED_AUTO_RETURN
     esp_timer_handle_t care_reminder_display_timer_handle_ = nullptr;
+
+    // DP044A_REMINDER_AUDIO_PRIORITY
+    esp_timer_handle_t care_reminder_audio_pre_timer_handle_ = nullptr;
+    esp_timer_handle_t care_reminder_audio_post_timer_handle_ = nullptr;
+    std::atomic<bool> care_reminder_audio_reserved_{false};
+    bool care_reminder_audio_pending_ = false;
+    bool care_reminder_audio_preparing_ = false;
+    bool care_reminder_audio_active_ = false;
+    bool care_reminder_audio_finishing_ = false;
+    std::string care_reminder_audio_target_;
+    std::string care_reminder_audio_message_;
+    int care_reminder_previous_volume_ = -1;
+    int care_reminder_boosted_volume_ = -1;
+    bool care_reminder_volume_boosted_ = false;
+
+    // DP044B_UNIVERSAL_ACK
+    bool care_ack_listening_requested_ = false;
+    std::string care_ack_listening_target_;
+
+    // DP044B1_3_USER_ACK_PROMPT
+    // Pregunta universal cargada por la familia desde la web. Se reproduce
+    // completamente antes de abrir el micrófono.
+    bool care_ack_prompt_active_ = false;
+    std::string care_ack_prompt_audio_cache_;
+
+    // DP044B1_4B_DELAYED_ACK_PROMPT
+    // Espera de 60 s entre el final del aviso y la pregunta de confirmación.
+    esp_timer_handle_t care_ack_prompt_delay_timer_handle_ = nullptr;
+    bool care_ack_prompt_delay_pending_ = false;
+    std::string care_ack_prompt_delay_target_;
+
+    // DP044B1_4_EXTENDED_ACK_WINDOW
+    // Ventana local de 30 s, hasta tres respuestas STT y hasta tres ciclos
+    // automáticos de escucha antes de volver al motor de repetición de 3 min.
+    esp_timer_handle_t care_ack_response_timer_handle_ = nullptr;
+    std::string care_ack_response_target_;
+    int64_t care_ack_response_deadline_us_ = 0;
+    uint8_t care_ack_response_attempts_ = 0;
+    uint8_t care_ack_listening_cycles_ = 0;
+    bool care_ack_retry_listening_only_ = false;
+
+    // DP044B3_PHYSICAL_ACK
+    std::mutex care_ack_physical_mutex_;
+    std::string care_ack_physical_target_;
+
     DeviceStateMachine state_machine_;
     ListeningMode listening_mode_ = kListeningModeAutoStop;
     AecMode aec_mode_ = kAecOff;
@@ -191,6 +247,26 @@ private:
     void CancelSlowSpeechTimer();
     void HandleSlowSpeechInputActivity();
     void HandleSlowSpeechTimeout();
+
+    // DP044A_REMINDER_AUDIO_PRIORITY
+    void MaybeStartCareReminderAudio();
+    void StartCareReminderAudioNow();
+    void BeginCareReminderAudioPostRoll();
+    void FinishCareReminderAudio();
+    void RestoreCareReminderVolume();
+
+    // DP044B_UNIVERSAL_ACK
+    bool MaybeStartCareAcknowledgementListening();
+
+    // DP044B1_4B_DELAYED_ACK_PROMPT
+    void ArmCareAckPromptDelay(const std::string& target);
+    void CancelCareAckPromptDelay();
+    void HandleCareAckPromptDelayElapsed();
+
+    // DP044B1_4_EXTENDED_ACK_WINDOW
+    void ArmCareAckResponseWindow(const std::string& target);
+    void ClearCareAckResponseWindow();
+    void HandleCareAckResponseTimeout();
 
     void StartNotification(std::string audio_url, std::vector<NotifySubtitle> subtitles);
     void StopNotification();

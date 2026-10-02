@@ -2,6 +2,7 @@ idf_component_register(
     SRCS "care_mcp_service.cc"
     INCLUDE_DIRS "include"
     REQUIRES
+        care-voice
         care-radio
         care-news
         care-core

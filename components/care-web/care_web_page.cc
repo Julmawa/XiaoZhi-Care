@@ -372,6 +372,66 @@ button,input,textarea,select{font:inherit}button{cursor:pointer}.shell{max-width
   .radioStationActions{justify-content:flex-start}
 }
 
+
+/* DP044B1_6_AUDIO_UI_SYNC */
+#section-maintenance .systemOrderedGrid{
+  gap:12px 16px;
+  margin-top:10px;
+  align-items:start;
+}
+#section-maintenance .systemOrderedGrid > .systemStackColumn{
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+  min-width:0;
+}
+#section-maintenance .systemOrderedGrid > .systemStackColumn > .card{
+  position:relative;
+  margin:0!important;
+  min-width:0;
+}
+#section-maintenance .systemOrderedGrid > .systemStackColumn > .card::after{
+  content:attr(data-system-order);
+  position:absolute;
+  top:14px;
+  right:16px;
+  min-width:27px;
+  height:27px;
+  padding:0 7px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  border-radius:9px;
+  background:#edf5ff;
+  border:1px solid #d6e7fa;
+  color:#245b9b;
+  font-size:11px;
+  font-weight:950;
+}
+#section-maintenance .systemOrderedGrid > .systemStackColumn > .card .panelTitle{
+  padding-right:42px;
+}
+#section-maintenance .systemOrderedGrid > .systemUsageCompact{
+  grid-column:1/-1;
+  margin:0!important;
+}
+#section-maintenance .systemAudioNotice{
+  margin-top:8px;
+  margin-bottom:0;
+}
+@media(max-width:900px){
+  #section-maintenance .systemOrderedGrid{
+    grid-template-columns:1fr;
+    gap:12px;
+  }
+  #section-maintenance .systemOrderedGrid > .systemStackColumn{
+    display:contents;
+  }
+  #section-maintenance .systemOrderedGrid > .systemUsageCompact{
+    grid-column:auto;
+  }
+}
+
 </style>
 </head>
 <body>
@@ -957,7 +1017,27 @@ button,input,textarea,select{font:inherit}button{cursor:pointer}.shell{max-width
           <div id="listeningProfileHelp" class="itemNotes">Media: espera 2,5 segundos de silencio.</div>
           <div class="actions"><button id="saveListeningProfileBtn" class="primary" type="button">Guardar velocidad de escucha</button></div>
         </div>
-        <div class="card">
+                <!-- DP044B2_CONFIG_ACK_AND_VOICE_LED -->
+        <div class="card systemCardAudio">
+          <div class="panelTitle"><h2>Confirmación de recordatorios</h2><span id="ackSettingsStatus" class="counter">60 s · 3 avisos</span></div>
+          <p class="muted">Configura cuándo XiaoZhi pregunta si se escuchó el recordatorio y cuántas veces puede presentar ese mismo aviso si todavía no fue confirmado.</p>
+          <div class="field">
+            <label>Tiempo antes de preguntar (0–60 segundos)</label>
+            <input id="ackPromptDelaySeconds" type="number" min="0" max="60" step="1" value="60">
+          </div>
+          <div class="field">
+            <label>Cantidad máxima de avisos</label>
+            <select id="ackMaxPresentations">
+              <option value="1">1 · solo aviso inicial</option>
+              <option value="2">2 · inicial + 1 repetición</option>
+              <option value="3" selected>3 · inicial + hasta 2 repeticiones</option>
+            </select>
+          </div>
+          <p class="muted">El tiempo se cuenta desde que termina el audio del aviso. Con 0 segundos, la pregunta de confirmación comienza inmediatamente.</p>
+          <div class="actions"><button id="saveAckSettingsBtn" class="primary" type="button">Guardar confirmación</button></div>
+        </div>
+
+<div class="card">
           <div class="panelTitle"><h2>Volumen del parlante</h2><span id="audioVolumeStatus" class="counter">--%</span></div>
           <p class="muted">Ajusta el volumen general de la voz y de los sonidos de XiaoZhi Care. El valor queda guardado.</p>
           <div class="volumeControl">
@@ -1061,6 +1141,21 @@ button,input,textarea,select{font:inherit}button{cursor:pointer}.shell{max-width
         </div>
 
 <div class="card">
+          <div class="panelTitle"><h2>Pregunta de confirmación</h2><span id="ackPromptStatus" class="counter">Sin audio</span></div>
+          <p class="muted">Audio universal que XiaoZhi Care reproduce después de cada recordatorio y antes de abrir el micrófono. No ocupa uno de los 12 audios asignables.</p>
+          <div class="itemNotes">Frase sugerida: “¿Escuchaste el recordatorio?” Podés grabarla con la voz de un familiar y cargarla como OGG / Opus.</div>
+          <div class="field" style="margin-top:14px"><label>Archivo OGG / Opus</label><input id="ackPromptFile" type="file" accept=".ogg,audio/ogg"></div>
+          <audio id="ackPromptPreview" class="hidden" preload="metadata"></audio>
+          <div id="ackPromptInfo" class="itemNotes">Todavía no hay un audio de confirmación guardado.</div>
+          <div class="actions">
+            <button id="ackPromptPreviewBtn" class="secondary" type="button" disabled>Escuchar seleccionado</button>
+            <button id="ackPromptSaveBtn" class="primary" type="button">Guardar / reemplazar</button>
+            <button id="ackPromptPlaySavedBtn" class="secondary" type="button" disabled>Escuchar guardado</button>
+            <button id="ackPromptDeleteBtn" class="danger" type="button" disabled>Eliminar</button>
+          </div>
+        </div>
+
+        <div class="card">
           <div class="panelTitle"><h2>Agregar audio</h2><span id="recordingsCount" class="counter"></span></div>
           <form id="recordingForm">
             <div class="field"><label>Nombre del audio *</label><input id="recordingLabel" maxlength="48" required placeholder="Ej.: Recordatorio del almuerzo"></div>
@@ -1094,8 +1189,8 @@ button,input,textarea,select{font:inherit}button{cursor:pointer}.shell{max-width
   <div class="appFoot"><span><b>XiaoZhi Care</b> · Cuidado que conecta</span><span>Un día más de bienestar, juntos corazón</span></div>
 </div>
 <script>
-const $=id=>document.getElementById(id);let csrf='';let authEnabled=true;let profile={},people=[],preferences=[],pillbox=[],reminders=[],routines=[],family=[],maintenance={},recordings=[],recordingLimits={};
-const errorText={INVALID_ARGUMENT:'Datos inválidos.',INVALID_ID:'Identificador inválido.',INVALID_DATE:'Fecha inválida.',INVALID_TIME:'Hora inválida.',TOO_LONG:'Uno de los campos es demasiado largo.',TOO_LARGE:'El registro es demasiado grande.',LIMIT_REACHED:'Se alcanzó el límite de registros.',NOT_FOUND:'Registro no encontrado.',IN_USE:'No se puede eliminar: la persona está vinculada a una preferencia o recordatorio.',STORAGE_ERROR:'Error de almacenamiento.',STORAGE_FULL:'No queda espacio suficiente en NVS.',NOT_INITIALIZED:'XiaoZhi Care no está listo.',UNSUPPORTED_VERSION:'Versión de datos no compatible.',AUTH_REQUIRED:'Sesión requerida.',AUTH_FAILED:'Contraseña incorrecta.',AUTH_LOCKED:'Demasiados intentos. Esperá un minuto.',CSRF_FAILED:'La sesión de seguridad cambió. Volvé a ingresar.',VOICE_STORAGE_NOT_READY:'El almacenamiento de audios no está disponible.',VOICE_UPLOAD_TOO_LARGE:'El archivo de audio es demasiado grande.',INVALID_VOICE_RECORDING:'Faltan datos del audio o del recordatorio.',INVALID_BASE64:'No se pudo leer el archivo de audio.',REMINDER_NOT_FOUND:'El recordatorio seleccionado ya no existe.',REMINDER_ALREADY_HAS_AUDIO:'Ese recordatorio ya tiene un audio asignado.',VOICE_LIMIT_REACHED:'Se alcanzó el máximo de audios.',AUDIO_ASSIGNED_TO_REMINDER:'Primero desasigná el audio del recordatorio.',VOICE_INDEX_WRITE_FAILED:'No se pudo guardar el índice de audios.'};
+const $=id=>document.getElementById(id);let csrf='';let authEnabled=true;let profile={},people=[],preferences=[],pillbox=[],reminders=[],routines=[],family=[],maintenance={},recordings=[],recordingLimits={},ackPrompt={configured:false};
+const errorText={INVALID_ARGUMENT:'Datos inválidos.',INVALID_ID:'Identificador inválido.',INVALID_DATE:'Fecha inválida.',INVALID_TIME:'Hora inválida.',TOO_LONG:'Uno de los campos es demasiado largo.',TOO_LARGE:'El registro es demasiado grande.',LIMIT_REACHED:'Se alcanzó el límite de registros.',NOT_FOUND:'Registro no encontrado.',IN_USE:'No se puede eliminar: la persona está vinculada a una preferencia o recordatorio.',STORAGE_ERROR:'Error de almacenamiento.',STORAGE_FULL:'No queda espacio suficiente en NVS.',NOT_INITIALIZED:'XiaoZhi Care no está listo.',UNSUPPORTED_VERSION:'Versión de datos no compatible.',AUTH_REQUIRED:'Sesión requerida.',AUTH_FAILED:'Contraseña incorrecta.',AUTH_LOCKED:'Demasiados intentos. Esperá un minuto.',CSRF_FAILED:'La sesión de seguridad cambió. Volvé a ingresar.',VOICE_STORAGE_NOT_READY:'El almacenamiento de audios no está disponible.',VOICE_UPLOAD_TOO_LARGE:'El archivo de audio es demasiado grande.',INVALID_VOICE_RECORDING:'Faltan datos del audio o del recordatorio.',INVALID_BASE64:'No se pudo leer el archivo de audio.',REMINDER_NOT_FOUND:'El recordatorio seleccionado ya no existe.',REMINDER_ALREADY_HAS_AUDIO:'Ese recordatorio ya tiene un audio asignado.',VOICE_LIMIT_REACHED:'Se alcanzó el máximo de audios.',AUDIO_ASSIGNED_TO_REMINDER:'Primero desasigná el audio del recordatorio.',VOICE_INDEX_WRITE_FAILED:'No se pudo guardar el índice de audios.',ACK_PROMPT_NOT_CONFIGURED:'No hay un audio de confirmación guardado.',ACK_PROMPT_SAVE_FAILED:'No se pudo guardar el audio de confirmación.',ACK_PROMPT_DELETE_FAILED:'No se pudo eliminar el audio de confirmación.'};
 function readableError(x){return errorText[x]||x||'Error desconocido'}
 function showMsg(text,type='ok'){
   const e=$('message');
@@ -1144,7 +1239,7 @@ function hideAll(){for(const id of ['setupView','loginView','appView'])$(id).cla
 function showSetup(){resetPasswordVisibility();hideAll();$('setupView').classList.remove('hidden');$('status').textContent='Configurar seguridad';setTimeout(()=>$('setupPassword').focus(),0)}
 function showLogin(){resetPasswordVisibility();hideAll();$('loginView').classList.remove('hidden');$('status').textContent='Bloqueado';$('loginPassword').value='';setTimeout(()=>$('loginPassword').focus(),0)}
 let bloodPressure=[];
-async function showApp(){hideAll();$('appView').classList.remove('hidden');if(authEnabled){$('changePasswordBtn').classList.remove('hidden');$('logoutBtn').classList.remove('hidden')}$('status').textContent=authEnabled?'Care listo':'Care listo · DEV sin contraseña';await loadPeople();await loadProfile();await Promise.all([loadPreferences(),loadRoutines(),loadPillbox(),loadReminders(),loadFamily(),loadMaintenance(),loadRecordings(),loadBloodPressure()]);setupPeopleFamilyUi();updatePersonFamilyOptions()}
+async function showApp(){hideAll();$('appView').classList.remove('hidden');if(authEnabled){$('changePasswordBtn').classList.remove('hidden');$('logoutBtn').classList.remove('hidden')}$('status').textContent=authEnabled?'Care listo':'Care listo · DEV sin contraseña';await loadPeople();await loadProfile();await Promise.all([loadPreferences(),loadRoutines(),loadPillbox(),loadReminders(),loadFamily(),loadMaintenance(),loadRecordings(),loadAcknowledgementPrompt(),loadBloodPressure()]);setupPeopleFamilyUi();updatePersonFamilyOptions()}
 async function refreshAuth(){try{const j=await api('/api/auth/state',{redirectOn401:false});const s=j.data||{};authEnabled=s.authentication!==false;if(!s.configured){csrf='';showSetup();return}if(!s.authenticated){csrf='';showLogin();return}csrf=s.csrf||'';await showApp()}catch(e){hideAll();$('status').textContent='Sin conexión';showMsg('No se pudo consultar XiaoZhi Care: '+readableError(e.message),'error')}}
 $('showSetupPassword').addEventListener('change',e=>setPasswordVisibility(['setupPassword','setupConfirm'],e.target.checked));$('showLoginPassword').addEventListener('change',e=>setPasswordVisibility(['loginPassword'],e.target.checked));$('showChangePassword').addEventListener('change',e=>setPasswordVisibility(['currentPassword','newPassword','newPasswordConfirm'],e.target.checked));
 $('setupForm').addEventListener('submit',async e=>{e.preventDefault();const p=$('setupPassword').value,c=$('setupConfirm').value;if(p!==c)return showMsg('Las contraseñas no coinciden.','error');if(p.length<8)return showMsg('La contraseña debe tener al menos 8 caracteres.','error');try{const j=await api('/api/auth/setup',{method:'POST',body:{password:p},redirectOn401:false});$('setupForm').reset();csrf=(j.data&&j.data.csrf)||'';showMsg('Contraseña creada.');await showApp()}catch(err){showMsg(readableError(err.message),'error')}});
@@ -1882,10 +1977,34 @@ function editReminder(id){
   $('reminderFormTitle').textContent='Editar '+reminderNumber(r.id);
   window.scrollTo({top:0,behavior:'smooth'})
 }
-async function removeReminder(id){const r=reminders.find(x=>x.id===id);if(!confirm('¿Eliminar '+(r?reminderNumber(r.id):'recordatorio')+'?'))return;try{await api('/api/reminders/'+id,{method:'DELETE',csrfRequired:true});showMsg('Recordatorio eliminado');resetReminder();await loadReminders();await loadRecordings();await loadMaintenance()}catch(e){showMsg(readableError(e.message),'error')}}
+async function removeReminder(id){const r=reminders.find(x=>x.id===id);const audio=recordings.find(a=>a.reminder_id===id);const extra=audio?' También se eliminará su audio asignado.':'';if(!confirm('¿Eliminar '+(r?reminderNumber(r.id):'recordatorio')+'?'+extra))return;try{await api('/api/reminders/'+id,{method:'DELETE',csrfRequired:true});showMsg(audio?'Recordatorio y audio asignado eliminados':'Recordatorio eliminado');resetReminder();await loadRecordings();await loadReminders();await loadMaintenance()}catch(e){showMsg(readableError(e.message),'error')}}
 function renderReminders(){const box=$('remindersList');$('remindersCount').textContent=reminders.length+' / 64';if(!reminders.length)return empty(box,'No hay recordatorios guardados.');box.textContent='';const sorted=[...reminders].sort((a,b)=>(a.date||'').localeCompare(b.date||'')||(a.time||'').localeCompare(b.time||''));for(const r of sorted){const person=people.find(p=>p.id===r.related_person_id);const audio=recordings.find(a=>a.reminder_id===r.id);const meta=[reminderNumber(r.id),r.date,r.time,recurrenceNames[r.recurrence]||r.recurrence,person?personTitle(person):'',audio?'Audio '+(audio.label||audio.id):'',r.enabled===false?'inactivo':''].filter(Boolean).join(' · ');const notes=[cleanRememberBeforeFromNotes(cleanVoiceTodoNotes(r.notes)||''),audio?'Audio asignado: '+(audio.label||audio.id):''].filter(Boolean).join('\n');box.appendChild(itemCard(r.title,meta,notes,()=>editReminder(r.id),()=>removeReminder(r.id)))}}
 async function loadReminders(){try{const j=await api('/api/reminders');reminders=j.data||[];renderReminders();updateRecordingReminderOptions();renderRecordings()}catch(e){showMsg('No se pudieron leer los recordatorios: '+readableError(e.message),'error')}}
-$('reminderForm').addEventListener('submit',async e=>{e.preventDefault();const id=$('reminderId').value;try{if(id)await api('/api/reminders/'+id,{method:'PUT',body:reminderPayload(),csrfRequired:true});else await api('/api/reminders',{method:'POST',body:reminderPayload(),csrfRequired:true});showMsg(id?'Recordatorio actualizado':'Recordatorio agregado');resetReminder();await loadReminders()}catch(err){showMsg(readableError(err.message),'error')}});$('reminderCancel').onclick=resetReminder;
+// DP044B1_3A_REMINDER_SUBMIT_GUARD
+// Evita dos POST/PUT si el usuario hace doble clic o vuelve a enviar mientras
+// la primera petición todavía está en curso.
+let reminderSubmitInFlight=false;
+$('reminderForm').addEventListener('submit',async e=>{
+  e.preventDefault();
+  if(reminderSubmitInFlight)return;
+  reminderSubmitInFlight=true;
+  const submitBtn=e.currentTarget.querySelector('button[type="submit"]');
+  if(submitBtn)submitBtn.disabled=true;
+  const id=$('reminderId').value;
+  try{
+    if(id)await api('/api/reminders/'+id,{method:'PUT',body:reminderPayload(),csrfRequired:true});
+    else await api('/api/reminders',{method:'POST',body:reminderPayload(),csrfRequired:true});
+    showMsg(id?'Recordatorio actualizado':'Recordatorio agregado');
+    resetReminder();
+    await loadReminders();
+  }catch(err){
+    showMsg(readableError(err.message),'error');
+  }finally{
+    reminderSubmitInFlight=false;
+    if(submitBtn)submitBtn.disabled=false;
+  }
+});
+$('reminderCancel').onclick=resetReminder;
 
 // Audios por recordatorio - DP-018
 // DP040B_FASE1_GROUP_TARGETS
@@ -1946,7 +2065,10 @@ function voiceTargetTitle(id){
     return'Cuidado · '+routineNumber(r.id)+' · '+(r.title||'sin título');
   }
   const r=reminders.find(x=>x.id===t.id);
-  return r?(reminderNumber(r.id)+' · '+r.title):'Sin asignar';
+  // DP044B1_6_AUDIO_UI_SYNC
+  // El audio conserva el mismo reminder_id; título y hora se leen siempre del
+  // recordatorio actual, por lo que editarlo no requiere volver a cargar audio.
+  return r?[reminderNumber(r.id),r.title,r.time].filter(Boolean).join(' · '):'Sin asignar';
 }
 function recordingReminderTitle(id){return voiceTargetTitle(id)}
 function recordingAssignedTo(targetId,exceptId=''){return recordings.find(r=>r.id!==exceptId&&r.reminder_id===targetId)}
@@ -2088,6 +2210,142 @@ function setupPreparedAudioFolder(){
   renderPreparedAudioList();
 }
 setupPreparedAudioFolder();
+
+
+// DP044B1_3_USER_ACK_PROMPT
+let acknowledgementPromptAudio=null;
+
+function renderAcknowledgementPrompt(){
+  const configured=!!(ackPrompt&&ackPrompt.configured);
+  const status=$('ackPromptStatus'),info=$('ackPromptInfo');
+  if(status)status.textContent=configured?'Configurado':'Sin audio';
+  if(info){
+    info.textContent=configured
+      ?('Guardado · '+Math.round((ackPrompt.duration_ms||0)/100)/10+' s · '+Math.round((ackPrompt.size_bytes||0)/1024)+' KB. Se usará para todos los avisos que pidan confirmación.')
+      :'Todavía no hay un audio de confirmación guardado. Sin este archivo, XiaoZhi Care usa el cue nativo como fallback.';
+  }
+  if($('ackPromptPlaySavedBtn'))$('ackPromptPlaySavedBtn').disabled=!configured;
+  if($('ackPromptDeleteBtn'))$('ackPromptDeleteBtn').disabled=!configured;
+}
+
+async function loadAcknowledgementPrompt(){
+  try{
+    const j=await api('/api/maintenance/ack-prompt');
+    ackPrompt=j.data||{configured:false};
+  }catch(e){
+    ackPrompt={configured:false};
+    showMsg('No se pudo leer el audio de confirmación: '+readableError(e.message),'error');
+  }
+  renderAcknowledgementPrompt();
+}
+
+function setupAcknowledgementPromptPreview(){
+  const input=$('ackPromptFile'),audio=$('ackPromptPreview'),btn=$('ackPromptPreviewBtn');
+  if(!input||!audio||!btn)return;
+
+  input.addEventListener('change',()=>{
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.load();
+    audio.classList.add('hidden');
+    btn.disabled=true;
+
+    const f=input.files&&input.files[0];
+    if(!f)return;
+
+    const max=(ackPrompt&&ackPrompt.max_file_bytes)||recordingLimits.max_file_bytes||32768;
+    if(f.size>max){
+      input.value='';
+      showMsg('El audio supera '+Math.round(max/1024)+' KB.','error');
+      return;
+    }
+
+    const reader=new FileReader();
+    reader.onload=()=>{
+      audio.src=reader.result;
+      audio.load();
+      audio.classList.remove('hidden');
+      btn.disabled=false;
+    };
+    reader.onerror=()=>showMsg('No se pudo preparar el audio seleccionado.','error');
+    reader.readAsDataURL(f);
+  });
+
+  btn.onclick=async()=>{
+    if(!audio.src)return;
+    try{
+      audio.currentTime=0;
+      await audio.play();
+    }catch(e){
+      showMsg('El navegador no pudo reproducir el OGG seleccionado.','error');
+    }
+  };
+}
+
+async function saveAcknowledgementPrompt(){
+  const input=$('ackPromptFile');
+  const f=input&&input.files&&input.files[0];
+  if(!f)return showMsg('Elegí el archivo OGG / Opus de la pregunta de confirmación.','error');
+
+  const max=(ackPrompt&&ackPrompt.max_file_bytes)||recordingLimits.max_file_bytes||32768;
+  if(f.size>max)return showMsg('El audio supera '+Math.round(max/1024)+' KB.','error');
+
+  try{
+    const content_base64=await fileToBase64(f);
+    const j=await api('/api/maintenance/ack-prompt',{
+      method:'PUT',
+      body:{filename:f.name,content_base64},
+      csrfRequired:true
+    });
+    ackPrompt=Object.assign({},ackPrompt,j.data||{},{configured:true});
+    if(input)input.value='';
+    const preview=$('ackPromptPreview');
+    if(preview){preview.pause();preview.removeAttribute('src');preview.load();preview.classList.add('hidden')}
+    if($('ackPromptPreviewBtn'))$('ackPromptPreviewBtn').disabled=true;
+    renderAcknowledgementPrompt();
+    showMsg('Audio de confirmación guardado');
+  }catch(e){
+    showMsg('No se pudo guardar el audio de confirmación: '+readableError(e.message),'error');
+  }
+}
+
+function playSavedAcknowledgementPrompt(){
+  if(!(ackPrompt&&ackPrompt.configured))return;
+  try{
+    if(acknowledgementPromptAudio){
+      acknowledgementPromptAudio.pause();
+      acknowledgementPromptAudio=null;
+    }
+    acknowledgementPromptAudio=new Audio('/api/maintenance/ack-prompt/audio?_='+Date.now());
+    acknowledgementPromptAudio.play()
+      .then(()=>showMsg('Reproduciendo pregunta de confirmación'))
+      .catch(()=>showMsg('El navegador no pudo reproducir el audio guardado.','error'));
+  }catch(e){
+    showMsg('No se pudo iniciar la reproducción del audio guardado.','error');
+  }
+}
+
+async function deleteAcknowledgementPrompt(){
+  if(!(ackPrompt&&ackPrompt.configured))return;
+  if(!confirm('¿Eliminar el audio universal de confirmación?'))return;
+  try{
+    await api('/api/maintenance/ack-prompt',{
+      method:'DELETE',
+      body:{confirm:true},
+      csrfRequired:true
+    });
+    ackPrompt={configured:false,max_file_bytes:ackPrompt.max_file_bytes,max_duration_ms:ackPrompt.max_duration_ms};
+    renderAcknowledgementPrompt();
+    showMsg('Audio de confirmación eliminado');
+  }catch(e){
+    showMsg('No se pudo eliminar el audio de confirmación: '+readableError(e.message),'error');
+  }
+}
+
+setupAcknowledgementPromptPreview();
+if($('ackPromptSaveBtn'))$('ackPromptSaveBtn').onclick=saveAcknowledgementPrompt;
+if($('ackPromptPlaySavedBtn'))$('ackPromptPlaySavedBtn').onclick=playSavedAcknowledgementPrompt;
+if($('ackPromptDeleteBtn'))$('ackPromptDeleteBtn').onclick=deleteAcknowledgementPrompt;
 
 
 let uploadedRecordingAudio=null;
@@ -2641,11 +2899,66 @@ async function deleteRadioStation(index){
   }
 }
 
+// DP044B2_CONFIG_ACK_AND_VOICE_LED
+function renderAckSettings(){
+  const cfg=((maintenance||{}).ack_confirmation)||{};
+  let delay=Number(cfg.prompt_delay_seconds);
+  let max=Number(cfg.max_presentations);
+  if(!Number.isFinite(delay))delay=60;
+  if(!Number.isFinite(max))max=3;
+  delay=Math.max(0,Math.min(60,Math.round(delay)));
+  max=Math.max(1,Math.min(3,Math.round(max)));
+  if($('ackPromptDelaySeconds'))$('ackPromptDelaySeconds').value=String(delay);
+  if($('ackMaxPresentations'))$('ackMaxPresentations').value=String(max);
+  if($('ackSettingsStatus'))$('ackSettingsStatus').textContent=delay+' s · '+max+' aviso'+(max===1?'':'s');
+}
+
+// DP044B2_1_TOUCH_TEXT_TTS_CONFIRMATION
+let ackSettingsSaveInFlight=false;
+
+async function saveAckSettings(){
+  if(ackSettingsSaveInFlight)return;
+
+  const delay=parseInt(($('ackPromptDelaySeconds')||{}).value,10);
+  const max=parseInt(($('ackMaxPresentations')||{}).value,10);
+
+  if(!Number.isInteger(delay)||delay<0||delay>60){
+    showMsg('El tiempo de confirmación debe estar entre 0 y 60 segundos.','error');
+    return;
+  }
+  if(!Number.isInteger(max)||max<1||max>3){
+    showMsg('La cantidad máxima de avisos debe estar entre 1 y 3.','error');
+    return;
+  }
+
+  ackSettingsSaveInFlight=true;
+  const btn=$('saveAckSettingsBtn');
+  if(btn)btn.disabled=true;
+
+  try{
+    const j=await api('/api/maintenance/ack-settings',{
+      method:'PUT',
+      body:{prompt_delay_seconds:delay,max_presentations:max},
+      csrfRequired:true
+    });
+    const saved=(j.data)||{prompt_delay_seconds:delay,max_presentations:max};
+    if(!maintenance)maintenance={};
+    maintenance.ack_confirmation=saved;
+    renderAckSettings();
+    showMsg('Confirmación de recordatorios guardada.');
+  }catch(e){
+    showMsg('No se pudo guardar la confirmación: '+readableError(e.message),'error');
+  }finally{
+    ackSettingsSaveInFlight=false;
+    if(btn)btn.disabled=false;
+  }
+}
+
 function usageTitle(key){return {people:'Personas',preferences:'Preferencias',legacy_pillbox:'Pastillero legacy',reminders:'Recordatorios',routines:'Cuidados / cosas para hacer',executions:'Historial de cosas hechas',family:'Relaciones familiares',voice_recordings:'Audios de recordatorios'}[key]||key}
 function renderMaintenance(){const box=$('maintenanceList');if(!box)return;const data=maintenance||{};const usage=data.usage||{};const keys=['people','preferences','family','routines','executions','legacy_pillbox','reminders','voice_recordings'];box.textContent='';for(const k of keys){const u=usage[k]||{};const max=u.max||0, used=u.used||0;const item=document.createElement('div');item.className='item';const name=document.createElement('div');name.className='itemName';name.textContent=usageTitle(k);const meta=document.createElement('div');meta.className='itemMeta';meta.textContent=max?(used+' / '+max):String(used);item.append(name,meta);if(u.near_limit){const note=document.createElement('div');note.className='itemNotes';note.textContent='Atención: cerca del límite configurado.';item.appendChild(note)}box.appendChild(item)}
 const n=data.nvs||{};if(n.available){$('maintenanceNvs').textContent='NVS: '+n.used_entries+' entradas usadas, '+n.free_entries+' libres, '+n.total_entries+' totales. Namespaces: '+n.namespace_count+(n.low_space?'\nAtención: queda poco espacio libre en NVS.':'');}else{$('maintenanceNvs').textContent='NVS: no se pudo leer el estado'+(n.error?': '+n.error:'');}
 $('maintenanceCount').textContent='Mantenimiento';renderListeningProfile();renderAudioVolume();renderNewsSettings();}
-async function loadMaintenance(){try{const j=await api('/api/maintenance/status');maintenance=j.data||{};renderMaintenance()}catch(e){showMsg('No se pudo leer mantenimiento: '+readableError(e.message),'error')}}
+async function loadMaintenance(){try{const j=await api('/api/maintenance/status');maintenance=j.data||{};renderMaintenance();renderAckSettings()}catch(e){showMsg('No se pudo leer mantenimiento: '+readableError(e.message),'error')}}
 
 function downloadJsonFile(filename,obj){
   const blob=new Blob([JSON.stringify(obj,null,2)],{type:'application/json;charset=utf-8'});
@@ -2848,7 +3161,7 @@ async function restoreFullBackup(){
       await api('/api/reminders',{method:'POST',body,csrfRequired:true});
     }
 
-    await Promise.all([loadPeople(),loadProfile(),loadPreferences(),loadRoutines(),loadPillbox(),loadReminders(),loadFamily(),loadMaintenance(),loadRecordings()]);
+    await Promise.all([loadPeople(),loadProfile(),loadPreferences(),loadRoutines(),loadPillbox(),loadReminders(),loadFamily(),loadMaintenance(),loadRecordings(),loadAcknowledgementPrompt()]);
     setupPeopleFamilyUi();
     updatePersonFamilyOptions();
 
@@ -2870,6 +3183,7 @@ if($('saveAudioVolumeBtn'))$('saveAudioVolumeBtn').onclick=saveAudioVolume;
 if($('newsDefaultCategory'))$('newsDefaultCategory').onchange=updateNewsSettingsPreview;
 if($('newsHeadlineCount'))$('newsHeadlineCount').onchange=updateNewsSettingsPreview;
 if($('saveNewsSettingsBtn'))$('saveNewsSettingsBtn').onclick=saveNewsSettings;
+if($('saveAckSettingsBtn'))$('saveAckSettingsBtn').onclick=saveAckSettings;
 if($('maintenanceRefresh'))$('maintenanceRefresh').onclick=loadMaintenance;
 if($('fullBackupDownload'))$('fullBackupDownload').onclick=downloadFullBackup;
 if($('fullBackupValidate'))$('fullBackupValidate').onclick=validateFullBackup;
@@ -3044,14 +3358,27 @@ function dp040dOrganizeSystemOrder(){
   const grid=document.createElement('div');
   grid.className='systemOrderedGrid';
 
+  // DP044B1_6_AUDIO_UI_SYNC
+  // Dos pilas independientes evitan que una tarjeta alta (por ejemplo Radios
+  // o Audios asignados) deje un gran hueco debajo de la tarjeta vecina.
+  const leftColumn=document.createElement('div');
+  leftColumn.className='systemStackColumn systemStackLeft';
+  const rightColumn=document.createElement('div');
+  rightColumn.className='systemStackColumn systemStackRight';
+
+  const usageCard=orderedCards[orderedCards.length-1];
   orderedCards.forEach((card,index)=>{
     card.dataset.systemOrder=String(index+1);
+    card.style.order=String(index+1);
     if(orderedTitles[index]==='Uso de XiaoZhi Care'){
       card.classList.add('systemUsageCompact');
+      return;
     }
-    grid.appendChild(card);
+    (index%2===0?leftColumn:rightColumn).appendChild(card);
   });
 
+  grid.append(leftColumn,rightColumn);
+  grid.appendChild(usageCard);
   section.insertBefore(grid,firstGrid);
 
   // "Estado de memoria" deja de ocupar una tarjeta propia.
