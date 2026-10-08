@@ -505,6 +505,42 @@ void RadioService::SetNetworkActivityCallback(
     network_activity_cb_ = std::move(callback);
 }
 
+
+// DP-CF-003 - reproducción corta para TTS/avisos.
+bool RadioService::PlayOneShotUrl(const std::string& url) {
+    if (!initialized_.load() || url.empty()) {
+        ESP_LOGW(kTag, "One-shot requested before init or with empty URL");
+        return false;
+    }
+
+    const bool resume_radio =
+        wants_playing_.load() && !one_shot_active_.load();
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        one_shot_url_ = url;
+    }
+
+    one_shot_resume_radio_.store(resume_radio);
+    one_shot_active_.store(true);
+
+    ClearPcmBuffer();
+    stream_generation_.fetch_add(1);
+    user_paused_.store(false);
+    wants_playing_.store(true);
+
+    NetworkActivityCallback cb;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        cb = network_activity_cb_;
+    }
+    if (cb) cb(true);
+
+    ESP_LOGI(kTag, "DP-CF-003: one-shot audio requested");
+    return true;
+}
+
+
 bool RadioService::Play() {
     if (!initialized_.load()) return false;
 
@@ -952,10 +988,20 @@ void RadioService::WorkerTask() {
         }
 
         const uint32_t generation = stream_generation_.load();
-        const std::string url = GetStationUrl();
+
+        const bool one_shot = one_shot_active_.load();
+        std::string url;
+
+        if (one_shot) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            url = one_shot_url_;
+        } else {
+            url = GetStationUrl();
+        }
 
         if (url.empty()) {
             wants_playing_.store(false);
+            one_shot_active_.store(false);
             streaming_.store(false);
             continue;
         }
@@ -963,17 +1009,69 @@ void RadioService::WorkerTask() {
         const bool ok = StreamOnce(url, generation);
         streaming_.store(false);
 
-        if (wants_playing_.load() &&
-            generation == stream_generation_.load()) {
+        if (generation != stream_generation_.load()) {
+            continue;
+        }
+
+        if (one_shot && one_shot_active_.load()) {
+            ESP_LOGI(
+                kTag,
+                "DP-CF-003: one-shot stream ended (%s), draining PCM",
+                ok ? "eof" : "error"
+            );
+
+            for (int i = 0; i < 400; ++i) {
+                bool empty = false;
+                {
+                    std::lock_guard<std::mutex> lock(pcm_buffer_mutex_);
+                    empty = pcm_buffer_.empty() && buffered_ms_ == 0;
+                }
+                if (empty) break;
+                vTaskDelay(pdMS_TO_TICKS(10));
+            }
+
+            const bool resume = one_shot_resume_radio_.load();
+
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                one_shot_url_.clear();
+            }
+
+            one_shot_active_.store(false);
+            one_shot_resume_radio_.store(false);
+            ClearPcmBuffer();
+
+            if (resume) {
+                ESP_LOGI(kTag, "DP-CF-003: resuming previous radio");
+                wants_playing_.store(true);
+                user_paused_.store(false);
+            } else {
+                wants_playing_.store(false);
+
+                NetworkActivityCallback cb;
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    cb = network_activity_cb_;
+                }
+                if (cb) cb(false);
+            }
+
+            ESP_LOGI(kTag, "DP-CF-003: one-shot playback finished");
+            continue;
+        }
+
+        if (wants_playing_.load()) {
             ESP_LOGW(
                 kTag,
                 "Stream ended (%s); reconnecting in %d ms",
                 ok ? "eof" : "error",
-                kReconnectDelayMs);
+                kReconnectDelayMs
+            );
             vTaskDelay(pdMS_TO_TICKS(kReconnectDelayMs));
         }
     }
 }
+
 
 
 bool RadioService::StreamOnce(const std::string& url,

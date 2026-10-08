@@ -22,6 +22,7 @@
 #include <limits>
 
 #define TAG "Application"
+#include "care_homeassistant.h"
 
 // DP039_DIAGNOSTICO_LIMPIO: sólo se retiraron trazas de medición.
 // DP039_CARE_SLOW_SPEECH
@@ -128,6 +129,12 @@ void Application::Initialize() {
     audio_service_.Initialize(codec);
     audio_service_.Start();
 
+    // DP-CF-001 — Home Assistant / CARE Familia -> voz XiaoZhi.
+    xiaozhi_care::CareWebServer::GetInstance().SetFamilyMessageCallback(
+        [this](const std::string& sender, const std::string& message) -> bool {
+            return RequestCareFamilyMessageNotification(sender, message);
+        });
+
     // DP042A_RADIO_MP3_BASE
     auto& care_radio =
         xiaozhi_care::radio::RadioService::GetInstance();
@@ -144,6 +151,14 @@ void Application::Initialize() {
     // DP043C_RADIO_FINISHING
     care_radio.SetNetworkActivityCallback([this](bool active) {
         Schedule([this, active]() {
+            // DP-CF-006: clearing family orange on audio end
+            if (!active) {
+                auto* led = Board::GetInstance().GetLed();
+                if (led != nullptr) {
+                    led->ClearCareFamilyMessage();
+                }
+            }
+
             auto& b = Board::GetInstance();
 
             if (active) {
@@ -402,9 +417,13 @@ void Application::Run() {
 
 void Application::HandleNetworkConnectedEvent() {
     ESP_LOGI(TAG, "Network connected");
+
+    CareHomeAssistant::GetInstance().OnNetworkConnected();
+
     auto state = GetDeviceState();
 
     if (state == kDeviceStateStarting || state == kDeviceStateWifiConfiguring) {
+
         // Network is ready, start activation
         SetDeviceState(kDeviceStateActivating);
         if (activation_task_handle_ != nullptr) {
@@ -1330,6 +1349,93 @@ void Application::HandleNotificationFinished(uint32_t playback_id, bool success)
              success ? "completed" : "failed");
     StopNotification();
 }
+
+
+// DP-CF-002 — CARE Familia -> Home Assistant/Piper -> MP3 -> parlante.
+bool Application::RequestCareFamilyMessageNotification(
+    const std::string& sender,
+    const std::string& message
+) {
+    if (sender.empty() || message.empty()) {
+        ESP_LOGW(TAG, "DP-CF-002: mensaje familiar vacio");
+        return false;
+    }
+
+    const std::string speech = std::string("Dice ") + sender + ": " + message;
+
+    std::string audio_url;
+    if (!CareHomeAssistant::GetInstance().GetTtsUrl(speech, audio_url)) {
+        ESP_LOGE(TAG, "DP-CF-002: no se pudo generar TTS");
+        return false;
+    }
+
+    ESP_LOGI(TAG, "DP-CF-002: mensaje familiar listo para reproducir");
+
+    Schedule([this, audio_url = std::move(audio_url)]() mutable {
+        if (GetDeviceState() != kDeviceStateIdle) {
+            ESP_LOGW(TAG, "DP-CF-003: CARE ocupado; mensaje no reproducido");
+            return;
+        }
+
+        auto& radio =
+            xiaozhi_care::radio::RadioService::GetInstance();
+
+        radio.SetSystemPaused(false);
+
+        auto* led = Board::GetInstance().GetLed();
+        if (led != nullptr) {
+            led->ShowCareFamilyMessage();
+        }
+        ESP_LOGI(TAG, "DP-CF-006: family message visual started");
+
+        if (!radio.PlayOneShotUrl(audio_url)) {
+            if (led != nullptr) {
+                led->ClearCareFamilyMessage();
+            }
+            ESP_LOGE(TAG, "DP-CF-003: no se pudo iniciar MP3 familiar");
+            return;
+        }
+
+        ESP_LOGI(TAG, "DP-CF-003: MP3 familiar enviado al reproductor");
+    });
+
+    return true;
+}
+
+
+bool Application::RequestCareFamilyMessageTrigger() {
+    Schedule([this]() {
+        const DeviceState state = GetDeviceState();
+        if (state == kDeviceStateSpeaking) AbortSpeaking(kAbortReasonNone);
+        if (protocol_ == nullptr) {
+            ESP_LOGW(TAG, "DP-CF-001: protocolo XiaoZhi no disponible");
+            return;
+        }
+        if (state == kDeviceStateListening && protocol_->IsAudioChannelOpened()) {
+            protocol_->SendStopListening();
+        }
+        if (state == kDeviceStateListening || state == kDeviceStateSpeaking ||
+            state == kDeviceStateConnecting) {
+            SetDeviceState(kDeviceStateIdle);
+        }
+        if (!protocol_->IsAudioChannelOpened()) {
+            if (SetDeviceState(kDeviceStateConnecting) && protocol_->OpenAudioChannel()) {
+                SetDeviceState(kDeviceStateIdle);
+            } else if (GetDeviceState() == kDeviceStateConnecting) {
+                SetDeviceState(kDeviceStateIdle);
+            }
+        }
+        if (!protocol_->IsAudioChannelOpened()) {
+            ESP_LOGW(TAG, "DP-CF-001: no se pudo abrir canal para mensaje familiar");
+            return;
+        }
+        listening_mode_ = kListeningModeManualStop;
+        const bool sent = protocol_->SendTextInput("Mensaje familiar.");
+        ESP_LOGI(TAG, "DP-CF-001: trigger mensaje familiar enviado=%d", sent ? 1 : 0);
+    });
+    return true;
+}
+
 
 void Application::Schedule(std::function<void()>&& callback) {
     {

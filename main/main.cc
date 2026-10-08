@@ -15,6 +15,7 @@
 #include "care_mcp_xiaozhi.h"
 #include "care_daily/care_alarm_runtime.h"
 #include "care_voice/reminder_voice_runtime.h"
+#include "care_homeassistant.h"
 
 #define TAG "main"
 
@@ -51,10 +52,88 @@ extern "C" void app_main(void)
     }
 
     // Initialize and run the application
-    auto& app = Application::GetInstance();
-    app.Initialize();
+auto& app = Application::GetInstance();
+app.Initialize();
 
-    if (care_err == CareError::OK) {
+// DP-HA-001
+// Inicializa el puente entre XiaoZhi Care y Home Assistant.
+// Por ahora solo valida que el modulo esta integrado correctamente.
+CareHomeAssistant::GetInstance().Init();
+
+    // DP-HA-009
+    xiaozhi_care::CareWebServer::GetInstance().SetHomeAssistantStatusCallback(
+        [](xiaozhi_care::CareWebHomeAssistantStatus& status) -> bool {
+            auto& ha = CareHomeAssistant::GetInstance();
+
+            status.ready = ha.IsReady();
+            status.network_ready = ha.IsNetworkReady();
+
+            if (!status.ready || !status.network_ready) {
+                status.connected = false;
+                return true;
+            }
+
+            CareHaIndoorClimate indoor;
+            status.indoor_available = ha.GetIndoorClimate(indoor);
+
+            if (status.indoor_available) {
+                status.indoor_temperature = indoor.temperature;
+                status.indoor_humidity = indoor.humidity;
+            }
+
+            CareHaWeather weather;
+            status.weather_available = ha.GetWeather(weather);
+
+            if (status.weather_available) {
+                status.outdoor_temperature = weather.temperature;
+                status.outdoor_humidity = weather.humidity;
+                status.outdoor_condition = weather.condition;
+            }
+
+            status.connected =
+                status.indoor_available ||
+                status.weather_available;
+
+            return true;
+        });
+
+    // DP-HA-010A - descubrimiento de entidades Home Assistant
+    xiaozhi_care::CareWebServer::GetInstance().SetHomeAssistantEntitiesCallback(
+        [](std::vector<xiaozhi_care::CareWebHomeAssistantEntity>& out) -> bool {
+            std::vector<CareHaEntity> entities;
+
+            if (!CareHomeAssistant::GetInstance().GetEntities(entities)) {
+                return false;
+            }
+
+            out.clear();
+            out.reserve(entities.size());
+
+            for (const auto& entity : entities) {
+                xiaozhi_care::CareWebHomeAssistantEntity web_entity;
+                web_entity.entity_id = entity.entity_id;
+                web_entity.domain = entity.domain;
+                web_entity.friendly_name = entity.friendly_name;
+                web_entity.state = entity.state;
+                out.push_back(std::move(web_entity));
+            }
+
+            return true;
+        });
+
+    // DP-HA-010B - lista permitida persistente
+    xiaozhi_care::CareWebServer::GetInstance().SetHomeAssistantAllowlistCallbacks(
+        [](std::vector<std::string>& out) -> bool {
+            return CareHomeAssistant::GetInstance()
+                .GetAllowedEntities(out);
+        },
+        [](const std::vector<std::string>& entities) -> bool {
+            return CareHomeAssistant::GetInstance()
+                .SetAllowedEntities(entities);
+        });
+
+
+        if (care_err == CareError::OK) {
         esp_err_t web_err =
             xiaozhi_care::CareWebServer::GetInstance().Start();
 

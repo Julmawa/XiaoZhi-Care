@@ -274,6 +274,41 @@ void SingleLed::OnCareAlertTimeout() {
 }
 
 
+// DP-CF-006_R3_FAMILY_ORANGE_LED
+bool SingleLed::ShowCareFamilyMessage() {
+    if (led_strip_ == nullptr) {
+        ESP_LOGW(TAG, "DP-CF-006: LED naranja ignorado; tira no inicializada");
+        return false;
+    }
+
+    care_family_message_active_.store(true);
+
+    // Toda alerta visual CARE existente (incluido ACK blanco) conserva prioridad.
+    if (care_alert_active_.load()) {
+        ESP_LOGI(TAG, "DP-CF-006: naranja pendiente; overlay CARE tiene prioridad");
+        return true;
+    }
+
+    SetColor(HIGH_BRIGHTNESS,
+             static_cast<uint8_t>(HIGH_BRIGHTNESS / 3),
+             0);
+    TurnOn();
+
+    ESP_LOGI(TAG, "DP-CF-006: family message LED orange ON");
+    return true;
+}
+
+void SingleLed::ClearCareFamilyMessage() {
+    const bool was_active = care_family_message_active_.exchange(false);
+    if (!was_active) {
+        return;
+    }
+
+    ESP_LOGI(TAG, "DP-CF-006: family message LED orange OFF; restoring state");
+    OnStateChanged();
+}
+
+
 void SingleLed::OnStateChanged() {
     auto& app = Application::GetInstance();
     auto device_state = app.GetDeviceState();
@@ -300,6 +335,17 @@ void SingleLed::OnStateChanged() {
             return;
         }
     }
+    // DP-CF-006: orange priority
+    // Los overlays CARE (recordatorios / ACK) ya fueron evaluados arriba.
+    // Si no hay uno activo, el mensaje familiar conserva naranja fijo.
+    if (care_family_message_active_.load()) {
+        SetColor(HIGH_BRIGHTNESS,
+                 static_cast<uint8_t>(HIGH_BRIGHTNESS / 3),
+                 0);
+        TurnOn();
+        return;
+    }
+
     switch (device_state) {
         case kDeviceStateStarting:
             SetColor(0, 0, DEFAULT_BRIGHTNESS);

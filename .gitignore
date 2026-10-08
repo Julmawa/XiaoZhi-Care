@@ -70,3 +70,6 @@ tools/audio_care/convertidos/
 tools/audio_care/reporte.txt
 tools/*.exe
 tools/audio_care/*.exe
+
+# token de Home Assistant
+main/care_homeassistant/care_homeassistant_secrets.h

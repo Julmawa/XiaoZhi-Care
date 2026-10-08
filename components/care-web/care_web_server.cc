@@ -1,3 +1,4 @@
+#include "nvs.h"
 #include "care_web_server.h"
 
 #include <algorithm>
@@ -19,6 +20,101 @@
 
 namespace xiaozhi_care {
 namespace {
+
+constexpr char kHaWebNvsNamespace[] = "care_ha";
+constexpr char kHaFriendlyNamesKey[] = "web_names";
+constexpr size_t kHaMaxSavedNames = 64;
+constexpr size_t kHaMaxEntityIdLength = 96;
+constexpr size_t kHaMaxFriendlyNameLength = 96;
+
+bool LoadHaFriendlyNamesJson(std::string& json) {
+    json.clear();
+
+    nvs_handle_t handle = 0;
+    esp_err_t err = nvs_open(
+        kHaWebNvsNamespace,
+        NVS_READONLY,
+        &handle
+    );
+
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        return true;
+    }
+
+    if (err != ESP_OK) {
+        return false;
+    }
+
+    size_t size = 0;
+    err = nvs_get_blob(
+        handle,
+        kHaFriendlyNamesKey,
+        nullptr,
+        &size
+    );
+
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        nvs_close(handle);
+        return true;
+    }
+
+    if (err != ESP_OK) {
+        nvs_close(handle);
+        return false;
+    }
+
+    if (size == 0) {
+        nvs_close(handle);
+        json = "[]";
+        return true;
+    }
+
+    std::string buffer(size, '\0');
+
+    err = nvs_get_blob(
+        handle,
+        kHaFriendlyNamesKey,
+        buffer.data(),
+        &size
+    );
+
+    nvs_close(handle);
+
+    if (err != ESP_OK) {
+        return false;
+    }
+
+    json.assign(buffer.data(), size);
+    return true;
+}
+
+bool SaveHaFriendlyNamesJson(const std::string& json) {
+    nvs_handle_t handle = 0;
+    esp_err_t err = nvs_open(
+        kHaWebNvsNamespace,
+        NVS_READWRITE,
+        &handle
+    );
+
+    if (err != ESP_OK) {
+        return false;
+    }
+
+    err = nvs_set_blob(
+        handle,
+        kHaFriendlyNamesKey,
+        json.data(),
+        json.size()
+    );
+
+    if (err == ESP_OK) {
+        err = nvs_commit(handle);
+    }
+
+    nvs_close(handle);
+    return err == ESP_OK;
+}
+
 
 constexpr char kTag[] = "CARE_WEB";
 constexpr uint16_t kServerPort = 8080;
@@ -288,6 +384,22 @@ bool ExtractPersonId(httpd_req_t* req, std::string& id) {
     return id.find('/') == std::string::npos;
 }
 
+// DP-CF-004_FAMILY_CORS
+// CARE Familia se sirve desde otro origen (por ejemplo localhost:8088).
+// Este CORS se limita al endpoint de mensajes familiares.
+void SetFamilyCorsHeaders(httpd_req_t* req) {
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Methods", "POST, OPTIONS");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Headers", "Content-Type");
+    httpd_resp_set_hdr(req, "Access-Control-Max-Age", "600");
+}
+
+esp_err_t HandleFamilyMessageOptions(httpd_req_t* req) {
+    SetFamilyCorsHeaders(req);
+    httpd_resp_set_status(req, "204 No Content");
+    return httpd_resp_send(req, nullptr, 0);
+}
+
 esp_err_t Register(httpd_handle_t server, const char* uri, httpd_method_t method,
                    esp_err_t (*handler)(httpd_req_t*)) {
     httpd_uri_t entry{};
@@ -346,7 +458,7 @@ esp_err_t CareWebServer::Start() {
     config.server_port = kServerPort;
     config.ctrl_port = kControlPort;
     config.stack_size = 7168;
-    config.max_uri_handlers = 64;
+    config.max_uri_handlers = 80;  // DP-CF-005: espacio para CORS/CARE Familia y rutas futuras.
 
     // CARE_WEB_SOCKET_BUDGET
     // Preserve LWIP sockets for MQTT, UDP audio and transient network work.
@@ -374,6 +486,14 @@ esp_err_t CareWebServer::Start() {
         {"/api/auth/logout", HTTP_POST, HandleAuthLogout},
         {"/api/auth/password", HTTP_PUT, HandleAuthPassword},
         {"/api/status", HTTP_GET, HandleStatus},
+        {"/api/family-message", HTTP_POST, HandleFamilyMessage},
+        {"/api/family-message", HTTP_OPTIONS, HandleFamilyMessageOptions},
+        {"/api/home-assistant/status", HTTP_GET, HandleHomeAssistantStatus},
+        {"/api/home-assistant/entities", HTTP_GET, HandleHomeAssistantEntities},
+        {"/api/home-assistant/allowed", HTTP_GET, HandleHomeAssistantAllowedGet},
+        {"/api/home-assistant/allowed", HTTP_PUT, HandleHomeAssistantAllowedPut},
+        {"/api/home-assistant/names", HTTP_GET, HandleHomeAssistantNamesGet},
+        {"/api/home-assistant/names", HTTP_PUT, HandleHomeAssistantNamesPut},
         {"/api/maintenance/status", HTTP_GET, HandleMaintenanceStatus},
         {"/api/maintenance/audio-volume", HTTP_PUT, HandleMaintenanceAudioVolume},
         {"/api/maintenance/news-settings", HTTP_PUT, HandleMaintenanceNewsSettings},
@@ -923,6 +1043,609 @@ esp_err_t CareWebServer::HandleStatus(httpd_req_t* req) {
     cJSON_AddItemToObject(root, "data", data);
     return SendRoot(req, root);
 }
+
+// DP-HA-009
+esp_err_t CareWebServer::HandleHomeAssistantStatus(httpd_req_t* req) {
+    if (!GetInstance().Authorize(req, false)) {
+        return ESP_OK;
+    }
+
+    auto& web = GetInstance();
+
+    if (!web.home_assistant_status_callback_) {
+        return SendNamedError(
+            req,
+            "503 Service Unavailable",
+            "HOME_ASSISTANT_UNAVAILABLE");
+    }
+
+    CareWebHomeAssistantStatus status;
+
+    if (!web.home_assistant_status_callback_(status)) {
+        return SendNamedError(
+            req,
+            "503 Service Unavailable",
+            "HOME_ASSISTANT_UNAVAILABLE");
+    }
+
+    cJSON* root = cJSON_CreateObject();
+    cJSON* data = cJSON_CreateObject();
+
+    if (root == nullptr || data == nullptr) {
+        if (root) cJSON_Delete(root);
+        if (data) cJSON_Delete(data);
+        return SendJsonText(
+            req,
+            "500 Internal Server Error",
+            R"({"success":false,"error":"INTERNAL_ERROR"})");
+    }
+
+    cJSON_AddBoolToObject(root, "success", true);
+    cJSON_AddBoolToObject(data, "ready", status.ready);
+    cJSON_AddBoolToObject(data, "network_ready", status.network_ready);
+    cJSON_AddBoolToObject(data, "connected", status.connected);
+    cJSON_AddBoolToObject(data, "indoor_available", status.indoor_available);
+
+    if (status.indoor_available) {
+        cJSON_AddNumberToObject(
+            data, "indoor_temperature", status.indoor_temperature);
+        cJSON_AddNumberToObject(
+            data, "indoor_humidity", status.indoor_humidity);
+    }
+
+    cJSON_AddBoolToObject(data, "weather_available", status.weather_available);
+
+    if (status.weather_available) {
+        cJSON_AddNumberToObject(
+            data, "outdoor_temperature", status.outdoor_temperature);
+        cJSON_AddNumberToObject(
+            data, "outdoor_humidity", status.outdoor_humidity);
+        cJSON_AddStringToObject(
+            data, "outdoor_condition", status.outdoor_condition.c_str());
+    }
+
+    cJSON_AddItemToObject(root, "data", data);
+    return SendRoot(req, root);
+}
+
+
+// DP-HA-010A
+esp_err_t CareWebServer::HandleHomeAssistantEntities(httpd_req_t* req) {
+    if (!GetInstance().Authorize(req, false)) {
+        return ESP_OK;
+    }
+
+    auto& web = GetInstance();
+
+    if (!web.home_assistant_entities_callback_) {
+        return SendNamedError(
+            req,
+            "503 Service Unavailable",
+            "HOME_ASSISTANT_ENTITIES_UNAVAILABLE");
+    }
+
+    std::vector<CareWebHomeAssistantEntity> entities;
+
+    if (!web.home_assistant_entities_callback_(entities)) {
+        return SendNamedError(
+            req,
+            "503 Service Unavailable",
+            "HOME_ASSISTANT_ENTITIES_UNAVAILABLE");
+    }
+
+    cJSON* root = cJSON_CreateObject();
+    cJSON* data = cJSON_CreateObject();
+    cJSON* list = cJSON_CreateArray();
+
+    if (root == nullptr || data == nullptr || list == nullptr) {
+        if (root) cJSON_Delete(root);
+        if (data) cJSON_Delete(data);
+        if (list) cJSON_Delete(list);
+
+        return SendJsonText(
+            req,
+            "500 Internal Server Error",
+            R"({"success":false,"error":"INTERNAL_ERROR"})");
+    }
+
+    for (const auto& entity : entities) {
+        cJSON* item = cJSON_CreateObject();
+
+        if (item == nullptr) {
+            cJSON_Delete(root);
+            cJSON_Delete(data);
+            cJSON_Delete(list);
+
+            return SendJsonText(
+                req,
+                "500 Internal Server Error",
+                R"({"success":false,"error":"INTERNAL_ERROR"})");
+        }
+
+        cJSON_AddStringToObject(
+            item, "entity_id", entity.entity_id.c_str());
+        cJSON_AddStringToObject(
+            item, "domain", entity.domain.c_str());
+        cJSON_AddStringToObject(
+            item, "friendly_name", entity.friendly_name.c_str());
+        cJSON_AddStringToObject(
+            item, "state", entity.state.c_str());
+
+        cJSON_AddItemToArray(list, item);
+    }
+
+    cJSON_AddBoolToObject(root, "success", true);
+    cJSON_AddNumberToObject(
+        data,
+        "count",
+        static_cast<double>(entities.size()));
+    cJSON_AddItemToObject(data, "entities", list);
+    cJSON_AddItemToObject(root, "data", data);
+
+    return SendRoot(req, root);
+}
+
+
+// DP-HA-010B
+esp_err_t CareWebServer::HandleHomeAssistantAllowedGet(httpd_req_t* req) {
+    if (!GetInstance().Authorize(req, false)) {
+        return ESP_OK;
+    }
+
+    auto& web = GetInstance();
+
+    if (!web.home_assistant_allowlist_getter_) {
+        return SendNamedError(
+            req,
+            "503 Service Unavailable",
+            "HOME_ASSISTANT_ALLOWLIST_UNAVAILABLE");
+    }
+
+    std::vector<std::string> entity_ids;
+
+    if (!web.home_assistant_allowlist_getter_(entity_ids)) {
+        return SendNamedError(
+            req,
+            "503 Service Unavailable",
+            "HOME_ASSISTANT_ALLOWLIST_UNAVAILABLE");
+    }
+
+    cJSON* root = cJSON_CreateObject();
+    cJSON* data = cJSON_CreateObject();
+    cJSON* list = cJSON_CreateArray();
+
+    if (root == nullptr || data == nullptr || list == nullptr) {
+        if (root) cJSON_Delete(root);
+        if (data) cJSON_Delete(data);
+        if (list) cJSON_Delete(list);
+
+        return SendJsonText(
+            req,
+            "500 Internal Server Error",
+            R"({"success":false,"error":"INTERNAL_ERROR"})");
+    }
+
+    for (const auto& entity_id : entity_ids) {
+        cJSON* item = cJSON_CreateString(entity_id.c_str());
+
+        if (item == nullptr) {
+            cJSON_Delete(root);
+            cJSON_Delete(data);
+            cJSON_Delete(list);
+
+            return SendJsonText(
+                req,
+                "500 Internal Server Error",
+                R"({"success":false,"error":"INTERNAL_ERROR"})");
+        }
+
+        cJSON_AddItemToArray(list, item);
+    }
+
+    cJSON_AddBoolToObject(root, "success", true);
+    cJSON_AddItemToObject(data, "entity_ids", list);
+    cJSON_AddItemToObject(root, "data", data);
+
+    return SendRoot(req, root);
+}
+
+esp_err_t CareWebServer::HandleHomeAssistantAllowedPut(httpd_req_t* req) {
+    if (!GetInstance().Authorize(req, true)) {
+        return ESP_OK;
+    }
+
+    auto& web = GetInstance();
+
+    if (!web.home_assistant_allowlist_setter_) {
+        return SendNamedError(
+            req,
+            "503 Service Unavailable",
+            "HOME_ASSISTANT_ALLOWLIST_UNAVAILABLE");
+    }
+
+    std::string body;
+
+    if (ReadBody(req, body) != ESP_OK) {
+        return SendNamedError(
+            req,
+            "400 Bad Request",
+            "INVALID_BODY");
+    }
+
+    cJSON* root = cJSON_ParseWithLength(
+        body.data(),
+        body.size()
+    );
+
+    if (root == nullptr || !cJSON_IsObject(root)) {
+        if (root) cJSON_Delete(root);
+
+        return SendNamedError(
+            req,
+            "400 Bad Request",
+            "INVALID_JSON");
+    }
+
+    cJSON* array =
+        cJSON_GetObjectItemCaseSensitive(
+            root,
+            "entity_ids"
+        );
+
+    if (!cJSON_IsArray(array)) {
+        cJSON_Delete(root);
+
+        return SendNamedError(
+            req,
+            "400 Bad Request",
+            "INVALID_ENTITY_LIST");
+    }
+
+    constexpr size_t kMaxAllowed = 64;
+    constexpr size_t kMaxEntityIdLength = 96;
+
+    std::vector<std::string> entity_ids;
+
+    cJSON* item = nullptr;
+    cJSON_ArrayForEach(item, array) {
+        if (!cJSON_IsString(item) ||
+            item->valuestring == nullptr) {
+            cJSON_Delete(root);
+
+            return SendNamedError(
+                req,
+                "400 Bad Request",
+                "INVALID_ENTITY_ID");
+        }
+
+        const std::string entity_id =
+            item->valuestring;
+
+        if (entity_id.empty() ||
+            entity_id.size() > kMaxEntityIdLength ||
+            entity_id.find('.') == std::string::npos) {
+            cJSON_Delete(root);
+
+            return SendNamedError(
+                req,
+                "400 Bad Request",
+                "INVALID_ENTITY_ID");
+        }
+
+        if (std::find(
+                entity_ids.begin(),
+                entity_ids.end(),
+                entity_id) == entity_ids.end()) {
+            entity_ids.push_back(entity_id);
+        }
+
+        if (entity_ids.size() > kMaxAllowed) {
+            cJSON_Delete(root);
+
+            return SendNamedError(
+                req,
+                "400 Bad Request",
+                "TOO_MANY_ENTITIES");
+        }
+    }
+
+    cJSON_Delete(root);
+
+    if (!web.home_assistant_allowlist_setter_(entity_ids)) {
+        return SendNamedError(
+            req,
+            "500 Internal Server Error",
+            "HOME_ASSISTANT_ALLOWLIST_SAVE_FAILED");
+    }
+
+    cJSON* response = cJSON_CreateObject();
+    cJSON* data = cJSON_CreateObject();
+
+    if (response == nullptr || data == nullptr) {
+        if (response) cJSON_Delete(response);
+        if (data) cJSON_Delete(data);
+
+        return SendJsonText(
+            req,
+            "500 Internal Server Error",
+            R"({"success":false,"error":"INTERNAL_ERROR"})");
+    }
+
+    cJSON_AddBoolToObject(response, "success", true);
+    cJSON_AddNumberToObject(
+        data,
+        "count",
+        static_cast<double>(entity_ids.size()));
+    cJSON_AddItemToObject(response, "data", data);
+
+    return SendRoot(req, response);
+}
+
+
+
+// DP-HA-010E - persistencia local del friendly_name real de Home Assistant.
+esp_err_t CareWebServer::HandleHomeAssistantNamesGet(httpd_req_t* req) {
+    if (!GetInstance().Authorize(req, false)) {
+        return ESP_OK;
+    }
+
+    std::string saved_json;
+
+    if (!LoadHaFriendlyNamesJson(saved_json)) {
+        return SendNamedError(
+            req,
+            "500 Internal Server Error",
+            "HOME_ASSISTANT_NAMES_LOAD_FAILED");
+    }
+
+    cJSON* names = nullptr;
+
+    if (saved_json.empty()) {
+        names = cJSON_CreateArray();
+    } else {
+        names = cJSON_ParseWithLength(
+            saved_json.data(),
+            saved_json.size()
+        );
+    }
+
+    if (names == nullptr || !cJSON_IsArray(names)) {
+        if (names) cJSON_Delete(names);
+        names = cJSON_CreateArray();
+    }
+
+    cJSON* root = cJSON_CreateObject();
+    cJSON* data = cJSON_CreateObject();
+
+    if (root == nullptr || data == nullptr || names == nullptr) {
+        if (root) cJSON_Delete(root);
+        if (data) cJSON_Delete(data);
+        if (names) cJSON_Delete(names);
+
+        return SendJsonText(
+            req,
+            "500 Internal Server Error",
+            R"({"success":false,"error":"INTERNAL_ERROR"})");
+    }
+
+    cJSON_AddBoolToObject(root, "success", true);
+    cJSON_AddItemToObject(data, "entities", names);
+    cJSON_AddItemToObject(root, "data", data);
+
+    return SendRoot(req, root);
+}
+
+esp_err_t CareWebServer::HandleHomeAssistantNamesPut(httpd_req_t* req) {
+    if (!GetInstance().Authorize(req, true)) {
+        return ESP_OK;
+    }
+
+    std::string body;
+
+    if (ReadBody(req, body) != ESP_OK) {
+        return SendNamedError(
+            req,
+            "400 Bad Request",
+            "INVALID_BODY");
+    }
+
+    cJSON* root = cJSON_ParseWithLength(
+        body.data(),
+        body.size()
+    );
+
+    if (root == nullptr || !cJSON_IsObject(root)) {
+        if (root) cJSON_Delete(root);
+        return SendNamedError(
+            req,
+            "400 Bad Request",
+            "INVALID_JSON");
+    }
+
+    cJSON* entities =
+        cJSON_GetObjectItemCaseSensitive(root, "entities");
+
+    if (!cJSON_IsArray(entities)) {
+        cJSON_Delete(root);
+        return SendNamedError(
+            req,
+            "400 Bad Request",
+            "INVALID_ENTITY_LIST");
+    }
+
+    if (cJSON_GetArraySize(entities) >
+        static_cast<int>(kHaMaxSavedNames)) {
+        cJSON_Delete(root);
+        return SendNamedError(
+            req,
+            "400 Bad Request",
+            "TOO_MANY_ENTITIES");
+    }
+
+    cJSON* clean = cJSON_CreateArray();
+
+    if (clean == nullptr) {
+        cJSON_Delete(root);
+        return SendJsonText(
+            req,
+            "500 Internal Server Error",
+            R"({"success":false,"error":"INTERNAL_ERROR"})");
+    }
+
+    cJSON* item = nullptr;
+    cJSON_ArrayForEach(item, entities) {
+        if (!cJSON_IsObject(item)) {
+            cJSON_Delete(root);
+            cJSON_Delete(clean);
+            return SendNamedError(
+                req,
+                "400 Bad Request",
+                "INVALID_ENTITY_NAME");
+        }
+
+        cJSON* entity_id =
+            cJSON_GetObjectItemCaseSensitive(
+                item,
+                "entity_id"
+            );
+
+        cJSON* friendly_name =
+            cJSON_GetObjectItemCaseSensitive(
+                item,
+                "friendly_name"
+            );
+
+        if (!cJSON_IsString(entity_id) ||
+            entity_id->valuestring == nullptr ||
+            !cJSON_IsString(friendly_name) ||
+            friendly_name->valuestring == nullptr) {
+            cJSON_Delete(root);
+            cJSON_Delete(clean);
+            return SendNamedError(
+                req,
+                "400 Bad Request",
+                "INVALID_ENTITY_NAME");
+        }
+
+        const std::string id = entity_id->valuestring;
+        const std::string name = friendly_name->valuestring;
+
+        if (id.empty() ||
+            id.size() > kHaMaxEntityIdLength ||
+            id.find('.') == std::string::npos ||
+            name.empty() ||
+            name.size() > kHaMaxFriendlyNameLength) {
+            cJSON_Delete(root);
+            cJSON_Delete(clean);
+            return SendNamedError(
+                req,
+                "400 Bad Request",
+                "INVALID_ENTITY_NAME");
+        }
+
+        cJSON* row = cJSON_CreateObject();
+
+        if (row == nullptr) {
+            cJSON_Delete(root);
+            cJSON_Delete(clean);
+            return SendJsonText(
+                req,
+                "500 Internal Server Error",
+                R"({"success":false,"error":"INTERNAL_ERROR"})");
+        }
+
+        cJSON_AddStringToObject(
+            row,
+            "entity_id",
+            id.c_str()
+        );
+
+        cJSON_AddStringToObject(
+            row,
+            "friendly_name",
+            name.c_str()
+        );
+
+        cJSON_AddItemToArray(clean, row);
+    }
+
+    char* raw_json = cJSON_PrintUnformatted(clean);
+    cJSON_Delete(clean);
+    cJSON_Delete(root);
+
+    if (raw_json == nullptr) {
+        return SendJsonText(
+            req,
+            "500 Internal Server Error",
+            R"({"success":false,"error":"INTERNAL_ERROR"})");
+    }
+
+    const std::string serialized(raw_json);
+    cJSON_free(raw_json);
+
+    if (!SaveHaFriendlyNamesJson(serialized)) {
+        return SendNamedError(
+            req,
+            "500 Internal Server Error",
+            "HOME_ASSISTANT_NAMES_SAVE_FAILED");
+    }
+
+    cJSON* response = cJSON_CreateObject();
+    cJSON* data = cJSON_CreateObject();
+
+    if (response == nullptr || data == nullptr) {
+        if (response) cJSON_Delete(response);
+        if (data) cJSON_Delete(data);
+
+        return SendJsonText(
+            req,
+            "500 Internal Server Error",
+            R"({"success":false,"error":"INTERNAL_ERROR"})");
+    }
+
+    cJSON_AddBoolToObject(response, "success", true);
+    cJSON_AddItemToObject(response, "data", data);
+
+    return SendRoot(req, response);
+}
+
+
+// DP-CF-001
+esp_err_t CareWebServer::HandleFamilyMessage(httpd_req_t* req) {
+    SetFamilyCorsHeaders(req);
+    if (!GetInstance().Authorize(req, true)) return ESP_OK;
+    auto& web = GetInstance();
+    if (!web.family_message_callback_) {
+        return SendNamedError(req, "503 Service Unavailable", "FAMILY_MESSAGE_UNAVAILABLE");
+    }
+    std::string body;
+    if (ReadBody(req, body) != ESP_OK) {
+        return SendNamedError(req, "400 Bad Request", "INVALID_BODY");
+    }
+    cJSON* root = cJSON_ParseWithLength(body.data(), body.size());
+    if (root == nullptr || !cJSON_IsObject(root)) {
+        if (root) cJSON_Delete(root);
+        return SendNamedError(req, "400 Bad Request", "INVALID_JSON");
+    }
+    cJSON* sender_json = cJSON_GetObjectItemCaseSensitive(root, "sender");
+    cJSON* message_json = cJSON_GetObjectItemCaseSensitive(root, "message");
+    if (!cJSON_IsString(sender_json) || sender_json->valuestring == nullptr ||
+        !cJSON_IsString(message_json) || message_json->valuestring == nullptr) {
+        cJSON_Delete(root);
+        return SendNamedError(req, "400 Bad Request", "INVALID_FAMILY_MESSAGE");
+    }
+    const std::string sender = sender_json->valuestring;
+    const std::string message = message_json->valuestring;
+    cJSON_Delete(root);
+    if (sender.empty() || sender.size() > 64 || message.empty() || message.size() > 200) {
+        return SendNamedError(req, "400 Bad Request", "INVALID_FAMILY_MESSAGE");
+    }
+    if (!web.family_message_callback_(sender, message)) {
+        return SendNamedError(req, "503 Service Unavailable", "FAMILY_MESSAGE_NOT_ACCEPTED");
+    }
+    return SendJsonText(req, "200 OK", R"({"success":true,"data":{"accepted":true}})");
+}
+
 
 esp_err_t CareWebServer::HandlePeopleList(httpd_req_t* req) {
     if (!GetInstance().Authorize(req, false)) return ESP_OK;

@@ -5,12 +5,36 @@
 #include <functional>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include <esp_err.h>
 #include <esp_http_server.h>
 #include <freertos/FreeRTOS.h>
 
 namespace xiaozhi_care {
+
+struct CareWebHomeAssistantStatus {
+    bool ready = false;
+    bool network_ready = false;
+    bool connected = false;
+
+    bool indoor_available = false;
+    float indoor_temperature = 0.0f;
+    float indoor_humidity = 0.0f;
+
+    bool weather_available = false;
+    float outdoor_temperature = 0.0f;
+    int outdoor_humidity = 0;
+    std::string outdoor_condition;
+};
+
+struct CareWebHomeAssistantEntity {
+    std::string entity_id;
+    std::string domain;
+    std::string friendly_name;
+    std::string state;
+};
+
 
 class CareWebServer {
 public:
@@ -26,6 +50,23 @@ public:
     // DP039_AUDIO_VOLUME_WEB
     void SetAudioVolumeCallbacks(std::function<int()> getter,
                                  std::function<bool(int)> setter);
+
+    // DP-HA-009
+    void SetHomeAssistantStatusCallback(
+        std::function<bool(CareWebHomeAssistantStatus&)> callback);
+
+    // DP-HA-010A
+    void SetHomeAssistantEntitiesCallback(
+        std::function<bool(std::vector<CareWebHomeAssistantEntity>&)> callback);
+
+    // DP-HA-010B
+    void SetHomeAssistantAllowlistCallbacks(
+        std::function<bool(std::vector<std::string>&)> getter,
+        std::function<bool(const std::vector<std::string>&)> setter);
+
+    // DP-CF-001 — mensaje familiar hacia CARE.
+    void SetFamilyMessageCallback(
+        std::function<bool(const std::string&, const std::string&)> callback);
 
 private:
     CareWebServer() = default;
@@ -44,6 +85,13 @@ private:
     static esp_err_t HandleAuthLogout(httpd_req_t* req);
     static esp_err_t HandleAuthPassword(httpd_req_t* req);
     static esp_err_t HandleStatus(httpd_req_t* req);
+    static esp_err_t HandleFamilyMessage(httpd_req_t* req);
+    static esp_err_t HandleHomeAssistantStatus(httpd_req_t* req);
+    static esp_err_t HandleHomeAssistantEntities(httpd_req_t* req);
+    static esp_err_t HandleHomeAssistantAllowedGet(httpd_req_t* req);
+    static esp_err_t HandleHomeAssistantAllowedPut(httpd_req_t* req);
+    static esp_err_t HandleHomeAssistantNamesGet(httpd_req_t* req);
+    static esp_err_t HandleHomeAssistantNamesPut(httpd_req_t* req);
     static esp_err_t HandleMaintenanceStatus(httpd_req_t* req);
     static esp_err_t HandleMaintenanceAudioVolume(httpd_req_t* req);
     static esp_err_t HandleMaintenanceNewsSettings(httpd_req_t* req);
@@ -123,6 +171,23 @@ private:
     // DP039_AUDIO_VOLUME_WEB
     std::function<int()> audio_volume_getter_;
     std::function<bool(int)> audio_volume_setter_;
+
+    // DP-HA-009
+    std::function<bool(CareWebHomeAssistantStatus&)>
+        home_assistant_status_callback_;
+
+    // DP-HA-010A
+    std::function<bool(std::vector<CareWebHomeAssistantEntity>&)>
+        home_assistant_entities_callback_;
+
+    // DP-HA-010B
+    std::function<bool(std::vector<std::string>&)>
+        home_assistant_allowlist_getter_;
+    std::function<bool(const std::vector<std::string>&)>
+        home_assistant_allowlist_setter_;
+
+    std::function<bool(const std::string&, const std::string&)>
+        family_message_callback_;
 
     httpd_handle_t server_ = nullptr;
     mutable std::mutex session_mutex_;

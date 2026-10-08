@@ -754,6 +754,12 @@ esp_err_t CareWebServer::HandleProfilePut(httpd_req_t* req) {
     return SendOne(req, profile, [](const CareProfile& p) { return ProfileToJson(p, true); });
 }
 
+// DP-CF-001
+void CareWebServer::SetFamilyMessageCallback(
+    std::function<bool(const std::string&, const std::string&)> callback) {
+    family_message_callback_ = std::move(callback);
+}
+
 esp_err_t CareWebServer::HandlePreferencesList(httpd_req_t* req) {
     if (!GetInstance().Authorize(req, false)) return ESP_OK;
     std::vector<CarePreference> values;
@@ -1544,6 +1550,30 @@ void CareWebServer::SetAudioVolumeCallbacks(std::function<int()> getter,
     audio_volume_getter_ = std::move(getter);
     audio_volume_setter_ = std::move(setter);
 }
+
+
+// DP-HA-009
+void CareWebServer::SetHomeAssistantStatusCallback(
+    std::function<bool(CareWebHomeAssistantStatus&)> callback) {
+    home_assistant_status_callback_ = std::move(callback);
+}
+
+
+// DP-HA-010A - callback para descubrimiento de entidades
+void CareWebServer::SetHomeAssistantEntitiesCallback(
+    std::function<bool(std::vector<CareWebHomeAssistantEntity>&)> callback) {
+    home_assistant_entities_callback_ = std::move(callback);
+}
+
+
+// DP-HA-010B
+void CareWebServer::SetHomeAssistantAllowlistCallbacks(
+    std::function<bool(std::vector<std::string>&)> getter,
+    std::function<bool(const std::vector<std::string>&)> setter) {
+    home_assistant_allowlist_getter_ = std::move(getter);
+    home_assistant_allowlist_setter_ = std::move(setter);
+}
+
 
 esp_err_t CareWebServer::HandleMaintenanceStatus(httpd_req_t* req) {
     if (!GetInstance().Authorize(req, false)) return ESP_OK;

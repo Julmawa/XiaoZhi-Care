@@ -17,6 +17,10 @@ public:
 
     void OnStateChanged() override;
 
+    // DP-CF-006_R2_FAMILY_ORANGE_LED
+    bool ShowCareFamilyMessage() override;
+    void ClearCareFamilyMessage() override;
+
     // DP040C_FASE1_CARE_VISUAL_OVERLAY
     bool ShowCareAlert(int visual_pattern, int visual_color, const char* message);
     void ClearCareAlert();
@@ -33,6 +37,8 @@ private:
     // DP040C_FASE1_CARE_VISUAL_OVERLAY
     esp_timer_handle_t care_alert_timer_ = nullptr;
     std::atomic<bool> care_alert_active_{false};
+    // DP-CF-006_R2_FAMILY_ORANGE_LED
+    std::atomic<bool> care_family_message_active_{false};
 
     void StartBlinkTask(int times, int interval_ms);
     void OnBlinkTimer();

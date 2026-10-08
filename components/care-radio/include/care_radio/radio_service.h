@@ -34,6 +34,8 @@ public:
     void SetNetworkActivityCallback(NetworkActivityCallback callback);
 
     bool Play();
+    // DP-CF-003 - reproduce un MP3/AAC corto una sola vez.
+    bool PlayOneShotUrl(const std::string& url);
     // DP043B_RADIO_AAC_VOICE
     bool PlayStation(const std::string& selector);
     bool NextStation();
@@ -119,6 +121,11 @@ private:
 
     // DP043B_RADIO_AAC_VOICE
     std::atomic<uint32_t> stream_generation_{0};
+
+    // DP-CF-003 - reproducción temporal para mensajes familiares.
+    std::string one_shot_url_;
+    std::atomic<bool> one_shot_active_{false};
+    std::atomic<bool> one_shot_resume_radio_{false};
 
     // DP042B_RADIO_JITTER_BUFFER
     // Productor: HTTP + MP3. Consumidor: salida PCM continua.

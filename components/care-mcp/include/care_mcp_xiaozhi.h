@@ -1,151 +1,238 @@
 #pragma once
 
 #include "care_radio/radio_service.h"
-
 #include <esp_log.h>
-
 #include <string>
-
 #include "care_mcp_service.h"
 #include "mcp_server.h"
+#include "care_homeassistant.h"
 
 namespace xiaozhi_care {
 
 // This small adapter is intentionally header-only. It is compiled from the
 // XiaoZhi "main" component, where mcp_server.h already belongs, avoiding a
 // circular ESP-IDF component dependency between care-mcp and main.
+
 inline void RegisterCareMcpTools() {
+
     static bool registered = false;
+
     if (registered) {
+
         return;
+
     }
 
     auto& server = McpServer::GetInstance();
+
     auto& service = CareMcpService::GetInstance();
 
     server.AddTool(
+
         "care.get_profile",
         "Consulta el perfil personal local de XiaoZhi Care. Usar para preguntas sobre el nombre, apodo, cumpleaños, ciudad o zona horaria del usuario. El parametro field puede ser basic, birthday, city o timezone. Nunca devuelve notas privadas.",
+
         PropertyList({
+
             Property("field", kPropertyTypeString, std::string("basic")),
+
         }),
+
         [&service](const PropertyList& properties) -> ReturnValue {
+
             ESP_LOGI("CARE_MCP", "Tool call: care.get_profile");
+
             return service.GetProfile(properties["field"].value<std::string>());
+
         });
 
     server.AddTool(
+
         "care.find_person",
         "Busca una persona importante en la memoria local por nombre, apodo, alias o relacion (por ejemplo hija, nieta, vecino, medico). USAR SOLO para identidad, parentesco basico, cumpleaños, telefono o direccion. NO uses esta herramienta para responder gustos, que le gusta hacer, comida, musica, television, hobbies, mascotas, perro, gato, costumbres, habitos, siesta ni suele hacer. Para gustos o actividades usa care.get_hobbies; para comida usa care.get_food; para costumbres/siesta usa care.get_habits; para mascota usa care.get_pets. field controla el dato minimo a devolver: basic, birthday, phone o address. Usar basic si solo se necesita saber quien es. Si found=false pero clarification_required=true y hay similar_name_candidates, NO elijas automaticamente: pregunta brevemente al usuario si se referia a uno de esos nombres y vuelve a consultar solo despues de su confirmacion.",
+
         PropertyList({
+
             Property("query", kPropertyTypeString),
             Property("field", kPropertyTypeString, std::string("basic")),
+
         }),
+
         [&service](const PropertyList& properties) -> ReturnValue {
+
             ESP_LOGI("CARE_MCP", "Tool call: care.find_person");
+
             const uint32_t care_t0_ms = esp_log_timestamp();
+
             ReturnValue care_result = service.FindPerson(properties["query"].value<std::string>(),
+
                                          properties["field"].value<std::string>());
+
             ESP_LOGI("CARE_MCP_TIME", "tool=care.find_person elapsed_ms=%lu",
+
                      (unsigned long)(esp_log_timestamp() - care_t0_ms));
+
             return care_result;
+
         });
 
     server.AddTool(
+
         "care.get_hobbies",
         "Herramienta obligatoria para preguntas sobre hobbies, actividades favoritas, que le gusta hacer, que le encanta hacer o pasatiempos de una persona. Devuelve SOLO preferencias category=hobby. No mezcles comida, mascotas ni costumbres.",
+
         PropertyList({
             Property("owner", kPropertyTypeString, std::string("profile")),
+
         }),
+
         [&service](const PropertyList& properties) -> ReturnValue {
+
             ESP_LOGI("CARE_MCP", "Tool call: care.get_hobbies");
+
             const uint32_t care_t0_ms = esp_log_timestamp();
+
             ReturnValue care_result = service.GetPreference("hobby",
+
                                          properties["owner"].value<std::string>());
+
             ESP_LOGI("CARE_MCP_TIME", "tool=care.get_hobbies elapsed_ms=%lu",
+
                      (unsigned long)(esp_log_timestamp() - care_t0_ms));
+
             return care_result;
+
         });
 
-
     server.AddTool(
+
         "care.get_food",
         "Herramienta obligatoria para preguntas sobre comida, comidas favoritas, que le gusta comer, asado, picadas o alimentos preferidos de una persona. Devuelve SOLO preferencias category=food. No mezcles hobbies, mascotas ni costumbres. Se permite un comentario calido breve, por ejemplo 'bien argentino', sin agregar datos nuevos.",
+
         PropertyList({
+
             Property("owner", kPropertyTypeString, std::string("profile")),
+
         }),
+
         [&service](const PropertyList& properties) -> ReturnValue {
+
             ESP_LOGI("CARE_MCP", "Tool call: care.get_food");
+
             const uint32_t care_t0_ms = esp_log_timestamp();
+
             ReturnValue care_result = service.GetPreference("food",
+
                                          properties["owner"].value<std::string>());
+
             ESP_LOGI("CARE_MCP_TIME", "tool=care.get_food elapsed_ms=%lu",
+
                      (unsigned long)(esp_log_timestamp() - care_t0_ms));
+
             return care_result;
+
         });
 
-
     server.AddTool(
+
         "care.get_pets",
         "Herramienta obligatoria para preguntas sobre mascota, perro, gato, animal o como se llama la mascota de una persona. Devuelve SOLO preferencias category=pets. No mezcles hobbies, comida ni costumbres.",
+
         PropertyList({
+
             Property("owner", kPropertyTypeString, std::string("profile")),
+
         }),
+
         [&service](const PropertyList& properties) -> ReturnValue {
+
             ESP_LOGI("CARE_MCP", "Tool call: care.get_pets");
+
             const uint32_t care_t0_ms = esp_log_timestamp();
+
             ReturnValue care_result = service.GetPreference("pets",
+
                                          properties["owner"].value<std::string>());
+
             ESP_LOGI("CARE_MCP_TIME", "tool=care.get_pets elapsed_ms=%lu",
+
                      (unsigned long)(esp_log_timestamp() - care_t0_ms));
+
             return care_result;
+
         });
 
-
     server.AddTool(
+
         "care.get_habits",
         "Herramienta obligatoria para preguntas sobre costumbres, habitos, rutinas cotidianas, suele hacer, habitualmente o siesta de una persona. Ejemplos: que costumbre tiene Marcelo, que suele hacer Marcelo, Marcelo duerme la siesta. Devuelve SOLO preferencias category=habits. No mezcles hobbies, comida, mascotas, gustos generales ni cuidados. Si no hay datos habits, deci que no hay costumbres registradas.",
+
         PropertyList({
+
             Property("owner", kPropertyTypeString, std::string("profile")),
+
         }),
+
         [&service](const PropertyList& properties) -> ReturnValue {
+
             ESP_LOGI("CARE_MCP", "Tool call: care.get_habits");
+
             const uint32_t care_t0_ms = esp_log_timestamp();
+
             ReturnValue care_result = service.GetPreference("habits",
+
                                          properties["owner"].value<std::string>());
+
             ESP_LOGI("CARE_MCP_TIME", "tool=care.get_habits elapsed_ms=%lu",
+
                      (unsigned long)(esp_log_timestamp() - care_t0_ms));
+
             return care_result;
+
         });
 
-
     server.AddTool(
+
         "care.get_reminders",
         "Consulta recordatorios locales activos y memoria reciente. date usa YYYY-MM-DD; si se envia vacio usa la fecha actual del reloj del dispositivo. Incluye recordatorios de hoy y recordatorios proximos cuando entran en la ventana Empezar a recordar. Aplica recurrencias none, daily, weekly, monthly y yearly. Para preguntas como que tengo hoy, que tengo manana, que pasa esta semana o me olvide de algo, usa safe_message y los campos memory_text/when_text. Nunca expongas notas privadas ni tags internos.",
+
         PropertyList({
+
             Property("date", kPropertyTypeString, std::string("")),
+
         }),
+
         [&service](const PropertyList& properties) -> ReturnValue {
+
             ESP_LOGI("CARE_MCP", "Tool call: care.get_reminders");
+
             return service.GetReminders(properties["date"].value<std::string>());
+
         });
 
-
     server.AddTool(
+
         "care.add_todo_reminder",
         "Guarda una cosa para hacer creada por voz y la registra como recordatorio local visible en la pestaña Recordatorios del panel web. Usar cuando la persona diga frases como 'me haces acordar que...', 'recordame que...', 'no me dejes olvidar que...', 'tengo que comprar...', 'tengo que llamar...'. El campo text debe contener solo la cosa para hacer, sin la frase introductoria. Ejemplo: si dice 'me haces acordar que compre leche y galletitas', text='comprar leche y galletitas'. Responde siempre en español usando SOLO safe_message. No uses la palabra tecnica pendiente salvo que la persona la use. EXCEPCION IMPORTANTE: no uses esta herramienta para ordenes de radio como prender, poner, escuchar, cambiar, pausar, continuar o apagar la radio, aunque la frase contenga 'quiero', 'tenes que' o 'prender'. Esas ordenes usan exclusivamente care.radio_control.",
+
         PropertyList({
+
             Property("text", kPropertyTypeString),
             Property("related_person_id", kPropertyTypeString, std::string("")),
+
         }),
+
         [&service](const PropertyList& properties) -> ReturnValue {
+
             ESP_LOGI("CARE_MCP", "Tool call: care.add_todo_reminder");
             return service.AddTodoReminder(properties["text"].value<std::string>(),
+
                                            properties["related_person_id"].value<std::string>());
+
         });
 
-
     server.AddTool(
+
         "care.get_pillbox_plan",
         "HERRAMIENTA AUTORITATIVA DEL PASTILLERO. "
         "DEBES usar esta herramienta cuando el usuario mencione explicitamente "
@@ -164,39 +251,62 @@ inline void RegisterCareMcpTools() {
         "Nunca uses care.get_next_routine para una consulta explicitamente relacionada con el pastillero. "
         "Responde SOLO usando safe_message. "
         "No nombres medicamentos especificos.",
+
         PropertyList({
+
             Property(
+
                 "day",
+
                 kPropertyTypeString,
+
                 std::string("today")),
+
         }),
+
         [&service](const PropertyList& properties) -> ReturnValue {
+
             ESP_LOGI(
+
                 "CARE_MCP",
+
                 "Tool call: care.get_pillbox_plan");
 
             return service.GetPillboxPlan(
+
                 properties["day"].value<std::string>());
+
         });
 
     server.AddTool(
+
         "care.get_today_routines",
         "Herramienta para obtener una lista GENERAL de actividades y recordatorios de hoy. "
         "Usala cuando el usuario solicite explicitamente una lista general de lo que tiene para hacer hoy. "
         "NO usar para preguntas especificas sobre remedios, pastillas, medicacion, tomar, pastillero o casilleros. "
         "Para esas consultas DEBES usar care.get_pillbox_plan.",
+
         PropertyList({
+
             Property("weekday", kPropertyTypeInteger, 0, 0, 7),
             Property("time", kPropertyTypeString, std::string("")),
+
         }),
+
         [&service](const PropertyList& properties) -> ReturnValue {
+
             ESP_LOGI("CARE_MCP", "Tool call: care.get_today_routines");
+
             return service.GetDueRoutines(properties["weekday"].value<int>(),
+
                                           properties["time"].value<std::string>(),
+
                                           "today");
+
         });
 
     server.AddTool(
+
         "care.get_next_routine",
         "Herramienta para consultar la proxima ACTIVIDAD O RECORDATORIO GENERAL. "
         "Usala para preguntas como 'que me toca', 'que sigue', "
@@ -208,19 +318,28 @@ inline void RegisterCareMcpTools() {
         "'que tengo que tomar', 'que casillero me toca' o menciona explicitamente el pastillero, "
         "DEBES usar care.get_pillbox_plan. "
         "Esta herramienta NO realiza la revision de tomas pasadas del pastillero.",
+
         PropertyList({
+
             Property("weekday", kPropertyTypeInteger, 0, 0, 7),
             Property("time", kPropertyTypeString, std::string("")),
+
         }),
+
         [&service](const PropertyList& properties) -> ReturnValue {
+
             ESP_LOGI("CARE_MCP", "Tool call: care.get_next_routine");
+
             return service.GetDueRoutines(properties["weekday"].value<int>(),
+
                                           properties["time"].value<std::string>(),
+
                                           "next");
+
         });
 
-
     server.AddTool(
+
         "care.verify_pillbox_group",
         "Resuelve mediante COMPROBACION VISUAL una toma PASADA del pastillero "
         "que care.get_pillbox_plan devolvio como review_group_id. "
@@ -231,32 +350,52 @@ inline void RegisterCareMcpTools() {
         "NO usar esta herramienta para un horario futuro. "
         "NO inventes el group_id. "
         "NO nombres medicamentos.",
+
         PropertyList({
+
             Property(
+
                 "group_id",
+
                 kPropertyTypeString,
+
                 std::string("")),
+
             Property(
+
                 "result",
+
                 kPropertyTypeString,
+
                 std::string("uncertain")),
+
         }),
+
         [&service](
+
             const PropertyList& properties)
+
             -> ReturnValue {
 
             ESP_LOGI(
+
                 "CARE_MCP",
                 "Tool call: care.verify_pillbox_group");
 
             return service.VerifyPillboxGroup(
+
                 properties["group_id"]
+
                     .value<std::string>(),
+
                 properties["result"]
+
                     .value<std::string>());
+
         });
 
     server.AddTool(
+
         "care.confirm_pillbox_group",
         "Confirma TODO el casillero del pastillero que acaba de informar "
         "care.get_pillbox_plan. "
@@ -267,142 +406,224 @@ inline void RegisterCareMcpTools() {
         "care.get_pillbox_plan inmediatamente anterior. "
         "NO inventes, reconstruyas ni adivines group_id. "
         "No usar para manana ni para preguntas informativas.",
+
         PropertyList({
+
             Property(
+
                 "group_id",
                 kPropertyTypeString,
                 std::string("")),
+
         }),
+
         [&service](
+
             const PropertyList& properties)
             -> ReturnValue {
 
             ESP_LOGI(
+
                 "CARE_MCP",
                 "Tool call: care.confirm_pillbox_group");
 
             return service.ConfirmPillboxGroup(
+
                 properties["group_id"]
+
                     .value<std::string>());
+
         });
 
     server.AddTool(
+
         "care.record_routine_execution",
         "Registra por voz que la persona ya hizo, omitio o pospuso algo que estaba anotado. USAR SOLO despues de una confirmación explícita y clara del usuario, por ejemplo 'si, ya lo hice', 'confirmo que lo hice', 'si, anotalo', 'lo omiti' o 'lo hago despues'. Si la frase del usuario es confusa, cortada, mal transcripta o ambigua, NO llames esta herramienta: primero pregunta 'Queres que deje anotado que ya hiciste eso?'. Requiere que previamente una consulta de rutina haya devuelto un routine_id. No afirmar ingesta medica: dejar anotado que ya lo hizo no significa asegurar que tomo un medicamento. Si no tenes routine_id, primero consulta care.get_current_routines o care.get_next_routine segun corresponda.",
+
         PropertyList({
+
             Property("routine_id", kPropertyTypeString),
             Property("event", kPropertyTypeString, std::string("confirmed")),
             Property("message", kPropertyTypeString, std::string("")),
+
         }),
+
         [&service](const PropertyList& properties) -> ReturnValue {
+
             ESP_LOGI("CARE_MCP", "Tool call: care.record_routine_execution");
             return service.RecordRoutineExecution(properties["routine_id"].value<std::string>(),
+
                                                   properties["event"].value<std::string>(),
+
                                                   properties["message"].value<std::string>());
+
         });
 
     server.AddTool(
+
         "care.get_daily_status",
         "Resumen diario autoritativo de cosas para hacer y eventos. Usar para resumen general del dia, 'como voy con mis cosas' o balance de cosas hechas y pendientes. Para 'que falta hacer hoy' usa care.get_pending_today. Para 'que hice hoy' o 'que confirme hoy' usa care.get_completed_today. Para la voz evita 'rutina' y usa 'cosas para hacer hoy', 'lo que te toca' y 'deje anotado que ya lo hiciste'. No afirmar ingesta medica; responder con safe_message y, si corresponde, listar cosas por estado.",
+
         PropertyList({
+
             Property("date", kPropertyTypeString, std::string("")),
             Property("weekday", kPropertyTypeInteger, 0, 0, 7),
             Property("time", kPropertyTypeString, std::string("")),
+
         }),
+
         [&service](const PropertyList& properties) -> ReturnValue {
+
             ESP_LOGI("CARE_MCP", "Tool call: care.get_daily_status");
+
             return service.GetDailyStatus(properties["date"].value<std::string>(),
+
                                           properties["weekday"].value<int>(),
+
                                           properties["time"].value<std::string>());
+
         });
 
-
     server.AddTool(
+
         "care.get_pending_today",
         "Alias autoritativo para preguntas como 'que falta hacer hoy', 'que tengo pendiente hoy', 'que me queda por hacer' o 'que falta'. DEBES usar esta herramienta para pendientes del dia. Responde con safe_message y enumera solo las cosas pendientes devueltas. Evita la palabra rutina: usa cosas para hacer hoy o lo que te toca. No afirmar ingesta medica.",
+
         PropertyList({
+
             Property("date", kPropertyTypeString, std::string("")),
             Property("weekday", kPropertyTypeInteger, 0, 0, 7),
             Property("time", kPropertyTypeString, std::string("")),
+
         }),
+
         [&service](const PropertyList& properties) -> ReturnValue {
+
             ESP_LOGI("CARE_MCP", "Tool call: care.get_pending_today");
+
             return service.GetPendingToday(properties["date"].value<std::string>(),
                                            properties["weekday"].value<int>(),
                                            properties["time"].value<std::string>());
+
         });
 
     server.AddTool(
+
         "care.find_family_member",
         "Busca una persona o usuaria principal dentro del mapa familiar de XiaoZhi Care. DEBES usar esta herramienta para preguntas como 'quien es Ale', 'quien es Martina', 'como se llama mi nieta', 'quien es mi hija', 'quien es la esposa de Ale' o cualquier duda de nombres y parentescos familiares. Resultado autoritativo: responde solo con family_member y relationships. Si found=false, no inventes parentescos; deci que no esta anotado o pedi aclaracion si hay candidatos.",
+
         PropertyList({
+
             Property("query", kPropertyTypeString),
+
         }),
+
         [&service](const PropertyList& properties) -> ReturnValue {
+
             ESP_LOGI("CARE_MCP", "Tool call: care.find_family_member");
+
             return service.FindFamilyMember(properties["query"].value<std::string>());
+
         });
 
     server.AddTool(
+
         "care.get_person_connections",
         "Alias para consultar vinculos de una persona concreta. Usar para preguntas como 'con quien vive Ale', 'quien es la mama de Martina', 'quien es la pareja de Ale' o 'que vinculos tiene Marcelo'. person debe ser nombre, apodo, alias, relacion o profile. Responde solo con las conexiones devueltas por el firmware. Si no hay datos, no inventes.",
+
         PropertyList({
+
             Property("person", kPropertyTypeString),
+
         }),
+
         [&service](const PropertyList& properties) -> ReturnValue {
+
             ESP_LOGI("CARE_MCP", "Tool call: care.get_person_connections");
+
             return service.GetPersonConnections(properties["person"].value<std::string>());
+
         });
 
     server.AddTool(
+
         "care.who_is_family_member",
         "Alias autoritativo para preguntas directas como 'quien es Julieta', 'quien es Ale', 'quien es Martina', 'quien es Miriam', 'quien es Marcelo' o 'quien es esa persona'. DEBES usar esta herramienta antes de responder sobre identidad familiar. Si found=false, responde safe_message y no uses memoria externa.",
+
         PropertyList({
+
             Property("query", kPropertyTypeString),
+
         }),
+
         [&service](const PropertyList& properties) -> ReturnValue {
+
             ESP_LOGI("CARE_MCP", "Tool call: care.who_is_family_member");
             return service.WhoIsFamilyMember(properties["query"].value<std::string>());
+
         });
 
     server.AddTool(
+
         "care.get_children",
         "Alias autoritativo para preguntas como 'quienes son mis hijos', 'como se llaman mis hijos', 'tengo hijos anotados' o 'hijos de Yolita'. DEBES usar esta herramienta para hijos/as. person puede quedar vacio o ser profile para la usuaria principal; tambien puede ser un nombre/apodo. Responde solo con relatives y safe_message. Si relative_count=0, no inventes.",
+
         PropertyList({
+
             Property("person", kPropertyTypeString, std::string("profile")),
+
         }),
+
         [&service](const PropertyList& properties) -> ReturnValue {
+
             ESP_LOGI("CARE_MCP", "Tool call: care.get_children");
+
             return service.GetChildrenOf(properties["person"].value<std::string>());
+
         });
 
     server.AddTool(
+
         "care.get_grandchildren",
         "Alias autoritativo para preguntas como 'como se llama mi nieta', 'quienes son mis nietos', 'tengo nietos', 'mi nieta' o 'nietos de Yolita'. DEBES usar esta herramienta para nietos/as. person puede quedar vacio o ser profile para la usuaria principal. Responde solo con relatives y safe_message. Si relative_count=0, no inventes nombres.",
+
         PropertyList({
+
             Property("person", kPropertyTypeString, std::string("profile")),
+
         }),
+
         [&service](const PropertyList& properties) -> ReturnValue {
+
             ESP_LOGI("CARE_MCP", "Tool call: care.get_grandchildren");
             return service.GetGrandchildrenOf(properties["person"].value<std::string>());
+
         });
 
     server.AddTool(
+
         "care.get_partner_of",
         "Alias autoritativo para preguntas como 'quien es la pareja de Marcelo', 'quien es la esposa de Ale', 'con quien esta casada Ale', 'pareja de Julieta' o 'esposo de'. DEBES usar esta herramienta para pareja/esposa/esposo. Responde solo con relatives y safe_message. Si relative_count=0, no inventes.",
+
         PropertyList({
+
             Property("person", kPropertyTypeString),
+
         }),
+
         [&service](const PropertyList& properties) -> ReturnValue {
+
             ESP_LOGI("CARE_MCP", "Tool call: care.get_partner_of");
+
             return service.GetPartnerOf(properties["person"].value<std::string>());
+
         });
-
-
 
     // DP041_LATEST_NEWS
     // DP041B_NEWS_SYSTEM_CONFIG
+
     server.AddTool(
+
         "care.get_latest_news",
         "NOTICIAS Y ACTUALIDAD. Usa esta herramienta cuando el usuario pida "
         "noticias o quiera saber que esta pasando, por ejemplo: 'leeme las "
@@ -417,16 +638,24 @@ inline void RegisterCareMcpTools() {
         "personal: 'que tengo para hacer hoy', 'que me falta hacer' o 'que "
         "tengo pendiente' siguen usando rutinas/pendientes. Lee la cantidad "
         "de titulares configurada en Sistema, con titulo y fuente.",
-        PropertyList({
-            Property("category", kPropertyTypeString, std::string("default")),
-        }),
-        [&service](const PropertyList& properties) -> ReturnValue {
-            ESP_LOGI("CARE_MCP", "Tool call: care.get_latest_news");
-            return service.GetLatestNews(
-                properties["category"].value<std::string>()
-            );
-        });
 
+        PropertyList({
+
+            Property("category", kPropertyTypeString, std::string("default")),
+
+        }),
+
+        [&service](const PropertyList& properties) -> ReturnValue {
+
+            ESP_LOGI("CARE_MCP", "Tool call: care.get_latest_news");
+
+            return service.GetLatestNews(
+
+                properties["category"].value<std::string>()
+
+            );
+
+        });
 
     // DP042A_RADIO_MP3_BASE
     // DP042A_TOOL_LIMIT_FIX
@@ -435,7 +664,9 @@ inline void RegisterCareMcpTools() {
     // DP042A_RADIO_MP3_BASE
     // DP042A_TOOL_LIMIT_FIX
     // DP043B_RADIO_AAC_VOICE
+
     server.AddTool(
+
         "care.radio_control",
         "RADIO POR INTERNET. Usa esta UNICA herramienta para TODA orden o "
         "consulta sobre radio. action='play' para poner/prender/escuchar radio. "
@@ -456,81 +687,493 @@ inline void RegisterCareMcpTools() {
         "usando EXACTAMENTE el campo station devuelto. "
         "Para action=status usa exactamente station. "
         "No traduzcas, corrijas, completes ni inventes nombres de emisoras.",
+
         PropertyList({
+
             Property("action", kPropertyTypeString, std::string("play")),
             Property("station", kPropertyTypeString, std::string("")),
+
         }),
+
         [](const PropertyList& properties) -> ReturnValue {
+
             auto& radio =
+
                 xiaozhi_care::radio::RadioService::GetInstance();
 
             const std::string action =
+
                 properties["action"].value<std::string>();
+
             const std::string station =
+
                 properties["station"].value<std::string>();
 
             ESP_LOGI(
+
                 "CARE_MCP",
                 "Tool call: care.radio_control action=%s station=%s",
+
                 action.c_str(),
+
                 station.c_str());
 
             if (action == "play") {
+
                 const bool ok = station.empty()
+
                     ? radio.Play()
+
                     : radio.PlayStation(station);
 
                 if (!ok) {
+
                     return std::string(
+
                         "{\"ok\":false,"
                         "\"message\":\"No encontre esa emisora. Usa action=list para consultar las radios guardadas.\"}");
+
                 }
+
                 return radio.StatusJson();
+
             }
 
             if (action == "next") {
+
                 if (!radio.NextStation()) {
+
                     return std::string(
+
                         "{\"ok\":false,\"message\":\"No pude cambiar de emisora.\"}");
+
                 }
+
                 return radio.StatusJson();
+
             }
 
             if (action == "list") {
+
                 return radio.StationsJson();
+
             }
 
             if (action == "stop") {
+
                 radio.Stop();
+
                 return std::string(
+
                     "{\"ok\":true,\"state\":\"stopped\",\"message\":\"Radio apagada.\"}");
+
             }
 
             if (action == "pause") {
+
                 const bool ok = radio.Pause();
+
                 return ok
+
                     ? std::string("{\"ok\":true,\"state\":\"paused\",\"message\":\"Radio pausada.\"}")
+
                     : std::string("{\"ok\":false,\"message\":\"La radio no estaba reproduciendo.\"}");
+
             }
 
             if (action == "resume") {
+
                 const bool ok = radio.Resume();
+
                 return ok
+
                     ? radio.StatusJson()
+
                     : std::string("{\"ok\":false,\"message\":\"No pude reanudar la radio.\"}");
+
             }
 
             if (action == "status") {
+
                 return radio.StatusJson();
+
             }
 
             return std::string(
+
                 "{\"ok\":false,\"message\":\"Accion invalida. Usa play, next, list, stop, pause, resume o status.\"}");
+
         });
 
+    // DP-HA-010C-r3
+    // Home Assistant unificado en un solo tool MCP para no superar
+    // el limite global de herramientas.
+    server.AddTool(
+        "care.home_assistant",
+        "Herramienta unificada de Home Assistant para XiaoZhi Care. "
+        "REGLA DE PRIORIDAD: para CUALQUIER orden del usuario que implique "
+        "encender, prender, apagar o controlar por nombre un dispositivo del hogar, "
+        "DEBES usar SIEMPRE care.home_assistant antes que cualquier herramienta self.*. "
+        "No uses self.get_device_status ni ninguna herramienta self.* para resolver "
+        "luces, interruptores, carteles, WLED, televisores u otros dispositivos de Home Assistant. "
+        "Usala para: "
+        "(1) consultar temperatura o humedad dentro de la casa con action='indoor_climate'; "
+        "(2) consultar clima exterior actual con action='weather'; "
+        "(3) listar los dispositivos autorizados por la familia con action='list'; "
+        "(4) encender o prender un dispositivo autorizado con action='turn_on'; "
+        "(5) apagar un dispositivo autorizado con action='turn_off'; "
+        "(6) reproducir un mensaje familiar pendiente con action='family_message'. "
+        "REGLA ESPECIAL: si recibes la frase interna 'Mensaje familiar', "
+        "DEBES llamar esta herramienta con action='family_message' y luego responder "
+        "EXCLUSIVAMENTE con el campo speech devuelto, sin saludo, explicacion ni texto extra. "
+        "Para turn_on y turn_off pasa en device exactamente el nombre que dijo el usuario, "
+        "aunque pueda contener pequenos errores de transcripcion de voz. "
+        "Ejemplos que DEBEN usar esta herramienta: "
+        "'apaga cartel', 'prende cartel', 'apaga la lampara de pie', "
+        "'prende comedor 01', 'apaga WLED barra 1'. "
+        "Si no sabes si el dispositivo existe, usa action='list' en esta misma herramienta "
+        "antes de afirmar que no esta disponible. "
+        "No uses indoor_climate para clima exterior. "
+        "No uses weather para temperatura o humedad interior. "
+        "Solo turn_on y turn_off pueden actuar sobre dispositivos previamente permitidos. "
+        "Si found=false no afirmes que la accion se realizo. "
+        "Si ambiguous=true pide al usuario que aclare cual dispositivo. "
+        "Responde naturalmente en espanol usando los datos devueltos.",
+        PropertyList({
+            Property("action", kPropertyTypeString),
+            Property("device", kPropertyTypeString, std::string("")),
+        }),
+        [](const PropertyList& properties) -> ReturnValue {
+            ESP_LOGI(
+                "CARE_MCP",
+                "Tool call: care.home_assistant"
+            );
+
+            const std::string action =
+                properties["action"].value<std::string>();
+
+            ESP_LOGI(
+                "CARE_MCP",
+                "DP-CF-001-r4 action recibido: [%s]",
+                action.c_str()
+            );
+
+            // -------------------------------------------------
+            // Ambiente interior
+            // -------------------------------------------------
+            // DP-CF-001-r5 — mensaje familiar dentro del tool correcto.
+            if (action == "family_message") {
+                ESP_LOGI(
+                    "CARE_MCP",
+                    "DP-CF-001-r5 entrando en action family_message"
+                );
+
+                std::string sender;
+                std::string message;
+
+                if (!CareHomeAssistant::GetInstance()
+                         .GetPendingFamilyMessage(sender, message)) {
+                    return std::string(
+                        R"JSON({"available":false,"action":"family_message","message":"No hay un mensaje familiar pendiente."})JSON"
+                    );
+                }
+
+                cJSON* root = cJSON_CreateObject();
+                if (root == nullptr) {
+                    return std::string(
+                        R"JSON({"available":false,"action":"family_message","message":"No pude preparar el mensaje familiar."})JSON"
+                    );
+                }
+
+                const std::string speech =
+                    std::string("Dice ") + sender + ": " + message;
+
+                cJSON_AddBoolToObject(root, "available", true);
+                cJSON_AddStringToObject(root, "action", "family_message");
+                cJSON_AddStringToObject(root, "sender", sender.c_str());
+                cJSON_AddStringToObject(root, "message", message.c_str());
+                cJSON_AddStringToObject(root, "speech", speech.c_str());
+
+                char* raw_json = cJSON_PrintUnformatted(root);
+                cJSON_Delete(root);
+
+                if (raw_json == nullptr) {
+                    return std::string(
+                        R"JSON({"available":false,"action":"family_message","message":"No pude preparar el mensaje familiar."})JSON"
+                    );
+                }
+
+                std::string json(raw_json);
+                cJSON_free(raw_json);
+                return json;
+            }
+
+            if (action == "indoor_climate") {
+                CareHaIndoorClimate climate;
+
+                if (!CareHomeAssistant::GetInstance()
+                         .GetIndoorClimate(climate)) {
+                    return std::string(
+                        R"JSON({"available":false,"action":"indoor_climate","message":"No pude consultar los sensores de la casa en este momento."})JSON"
+                    );
+                }
+
+                cJSON* root = cJSON_CreateObject();
+
+                if (root == nullptr) {
+                    return std::string(
+                        R"JSON({"available":false,"action":"indoor_climate","message":"No pude preparar la respuesta."})JSON"
+                    );
+                }
+
+                cJSON_AddBoolToObject(root, "available", true);
+                cJSON_AddStringToObject(
+                    root,
+                    "action",
+                    "indoor_climate"
+                );
+                cJSON_AddNumberToObject(
+                    root,
+                    "temperature",
+                    climate.temperature
+                );
+                cJSON_AddNumberToObject(
+                    root,
+                    "humidity",
+                    climate.humidity
+                );
+
+                char* raw_json = cJSON_PrintUnformatted(root);
+                cJSON_Delete(root);
+
+                if (raw_json == nullptr) {
+                    return std::string(
+                        R"JSON({"available":false,"action":"indoor_climate","message":"No pude preparar la respuesta."})JSON"
+                    );
+                }
+
+                std::string result(raw_json);
+                cJSON_free(raw_json);
+                return result;
+            }
+
+            // -------------------------------------------------
+            // Clima exterior
+            // -------------------------------------------------
+            if (action == "weather") {
+                CareHaWeather weather;
+
+                if (!CareHomeAssistant::GetInstance()
+                         .GetWeather(weather)) {
+                    return std::string(
+                        R"JSON({"available":false,"action":"weather","message":"No pude consultar Home Assistant en este momento."})JSON"
+                    );
+                }
+
+                cJSON* root = cJSON_CreateObject();
+
+                if (root == nullptr) {
+                    return std::string(
+                        R"JSON({"available":false,"action":"weather","message":"No pude preparar la respuesta."})JSON"
+                    );
+                }
+
+                cJSON_AddBoolToObject(root, "available", true);
+                cJSON_AddStringToObject(
+                    root,
+                    "action",
+                    "weather"
+                );
+                cJSON_AddNumberToObject(
+                    root,
+                    "temperature",
+                    weather.temperature
+                );
+                cJSON_AddNumberToObject(
+                    root,
+                    "humidity",
+                    weather.humidity
+                );
+                cJSON_AddStringToObject(
+                    root,
+                    "condition",
+                    weather.condition.c_str()
+                );
+
+                char* raw_json = cJSON_PrintUnformatted(root);
+                cJSON_Delete(root);
+
+                if (raw_json == nullptr) {
+                    return std::string(
+                        R"JSON({"available":false,"action":"weather","message":"No pude preparar la respuesta."})JSON"
+                    );
+                }
+
+                std::string result(raw_json);
+                cJSON_free(raw_json);
+                return result;
+            }
+
+            // -------------------------------------------------
+            // Lista de dispositivos permitidos
+            // -------------------------------------------------
+            if (action == "list") {
+                std::vector<CareHaEntity> entities;
+
+                if (!CareHomeAssistant::GetInstance()
+                         .GetAllowedEntityDetails(entities)) {
+                    return std::string(
+                        R"JSON({"available":false,"action":"list","message":"No pude consultar los dispositivos permitidos."})JSON"
+                    );
+                }
+
+                cJSON* root = cJSON_CreateObject();
+                cJSON* list = cJSON_CreateArray();
+
+                if (root == nullptr || list == nullptr) {
+                    if (root) cJSON_Delete(root);
+                    if (list) cJSON_Delete(list);
+
+                    return std::string(
+                        R"JSON({"available":false,"action":"list","message":"No pude preparar la lista de dispositivos."})JSON"
+                    );
+                }
+
+                cJSON_AddBoolToObject(root, "available", true);
+                cJSON_AddStringToObject(root, "action", "list");
+                cJSON_AddNumberToObject(
+                    root,
+                    "count",
+                    static_cast<double>(entities.size())
+                );
+                cJSON_AddItemToObject(root, "devices", list);
+
+                for (const auto& entity : entities) {
+                    cJSON* item = cJSON_CreateObject();
+
+                    if (item == nullptr) {
+                        continue;
+                    }
+
+                    cJSON_AddStringToObject(
+                        item,
+                        "name",
+                        entity.friendly_name.c_str()
+                    );
+                    cJSON_AddStringToObject(
+                        item,
+                        "entity_id",
+                        entity.entity_id.c_str()
+                    );
+                    cJSON_AddStringToObject(
+                        item,
+                        "domain",
+                        entity.domain.c_str()
+                    );
+                    cJSON_AddStringToObject(
+                        item,
+                        "state",
+                        entity.state.c_str()
+                    );
+
+                    cJSON_AddItemToArray(list, item);
+                }
+
+                char* raw_json = cJSON_PrintUnformatted(root);
+                cJSON_Delete(root);
+
+                if (raw_json == nullptr) {
+                    return std::string(
+                        R"JSON({"available":false,"action":"list","message":"No pude preparar la lista de dispositivos."})JSON"
+                    );
+                }
+
+                std::string result(raw_json);
+                cJSON_free(raw_json);
+                return result;
+            }
+
+            // -------------------------------------------------
+            // Encender / apagar
+            // -------------------------------------------------
+            if (action == "turn_on" || action == "turn_off") {
+                const std::string device =
+                    properties["device"].value<std::string>();
+
+                CareHaDeviceControlResult result;
+
+                CareHomeAssistant::GetInstance()
+                    .ControlAllowedDevice(
+                        device,
+                        action,
+                        result
+                    );
+
+                cJSON* root = cJSON_CreateObject();
+
+                if (root == nullptr) {
+                    return std::string(
+                        R"JSON({"success":false,"message":"No pude preparar la respuesta."})JSON"
+                    );
+                }
+
+                cJSON_AddStringToObject(
+                    root,
+                    "action",
+                    action.c_str()
+                );
+                cJSON_AddBoolToObject(
+                    root,
+                    "success",
+                    result.success
+                );
+                cJSON_AddBoolToObject(
+                    root,
+                    "found",
+                    result.found
+                );
+                cJSON_AddBoolToObject(
+                    root,
+                    "ambiguous",
+                    result.ambiguous
+                );
+                cJSON_AddStringToObject(
+                    root,
+                    "entity_id",
+                    result.entity_id.c_str()
+                );
+                cJSON_AddStringToObject(
+                    root,
+                    "name",
+                    result.friendly_name.c_str()
+                );
+                cJSON_AddStringToObject(
+                    root,
+                    "message",
+                    result.message.c_str()
+                );
+
+                char* raw_json = cJSON_PrintUnformatted(root);
+                cJSON_Delete(root);
+
+                if (raw_json == nullptr) {
+                    return std::string(
+                        R"JSON({"success":false,"message":"No pude preparar la respuesta."})JSON"
+                    );
+                }
+
+                std::string json(raw_json);
+                cJSON_free(raw_json);
+                return json;
+            }
+
+            return std::string(
+                R"JSON({"success":false,"message":"Accion invalida. Usa indoor_climate, weather, list, turn_on, turn_off o family_message."})JSON"
+            );
+        });
 
     registered = true;
-    ESP_LOGI("CARE_MCP", "Registered 24 XiaoZhi Care MCP tools");
+    ESP_LOGI("CARE_MCP", "Registered 25 XiaoZhi Care MCP tools");
 }
 
 }  // namespace xiaozhi_care

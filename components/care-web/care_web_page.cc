@@ -372,6 +372,42 @@ button,input,textarea,select{font:inherit}button{cursor:pointer}.shell{max-width
   .radioStationActions{justify-content:flex-start}
 }
 
+
+/* DP-HA-009_HOME_ASSISTANT_WEB */
+.haHero{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:16px}
+.haState{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;font-size:13px;font-weight:900;border:1px solid #d6e7fa;background:#f5f9ff;color:#405273}
+.haState.ok{background:#eafaf3;color:#08744c;border-color:#c8f0df}
+.haState.bad{background:#fff0f1;color:#9b2727;border-color:#ffd4db}
+.haDot{width:9px;height:9px;border-radius:999px;background:currentColor}
+.haCards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.haMetricGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:14px}
+.haMetric{padding:16px;border:1px solid #dce8f7;border-radius:18px;background:linear-gradient(180deg,#fff,#f8fbff)}
+.haMetricLabel{font-size:12px;font-weight:850;color:var(--muted)}
+.haMetricValue{margin-top:5px;font-size:30px;line-height:1;font-weight:950;color:var(--navy);letter-spacing:-.04em}
+.haCondition{margin-top:12px;font-weight:850;color:#405273}
+@media(max-width:760px){.haCards,.haMetricGrid{grid-template-columns:1fr}.haHero{align-items:flex-start;flex-direction:column}}
+
+
+/* DP-HA-010A_ENTITY_DISCOVERY */
+.haEntityHead{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.haEntityGroups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}
+.haEntityGroup{border:1px solid #dce8f7;border-radius:18px;padding:14px;background:#fbfdff}
+.haEntityGroup h3{margin:0 0 10px;font-size:15px;color:var(--navy)}
+.haEntityList{display:flex;flex-direction:column;gap:8px}
+.haEntityRow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:start;padding:10px 11px;border:1px solid #e4edf7;border-radius:13px;background:white}
+.haEntityName{font-weight:900;color:#17345f}
+.haEntityId{font-size:11px;color:#7183a0;overflow-wrap:anywhere;margin-top:3px}
+.haEntityState{font-size:11px;font-weight:850;color:#405273;background:#eef6ff;border-radius:999px;padding:4px 8px;white-space:nowrap}
+@media(max-width:760px){.haEntityGroups{grid-template-columns:1fr}}
+
+
+/* DP-HA-010B_ALLOWLIST */
+.haAllowControl{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:800;color:#405273}
+.haAllowControl input{width:18px;height:18px;accent-color:var(--blue)}
+.haReadOnlyTag{font-size:11px;font-weight:800;color:#6d7d97;background:#f1f4f8;border-radius:999px;padding:4px 8px;white-space:nowrap}
+.haTechToggle{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:800;color:#405273}
+.haTechToggle input{width:17px;height:17px;accent-color:var(--blue)}
+
 </style>
 </head>
 <body>
@@ -461,8 +497,11 @@ button,input,textarea,select{font:inherit}button{cursor:pointer}.shell{max-width
           <span class="careNavHint">Audio, memoria y mantenimiento</span>
         </div>
         <div class="careNavItems">
+          <button class="tab" data-tab="homeassistant" type="button">
+            <span class="careNavIcon">07</span><span>Home Assistant</span>
+          </button>
           <button class="tab" data-tab="maintenance" type="button">
-            <span class="careNavIcon">07</span><span>Sistema</span>
+            <span class="careNavIcon">08</span><span>Sistema</span>
           </button>
         </div>
       </div>
@@ -943,6 +982,69 @@ button,input,textarea,select{font:inherit}button{cursor:pointer}.shell{max-width
     </section>
 
 
+    <section id="section-homeassistant" class="section">
+      <div class="haHero">
+        <div>
+          <h2 style="margin:0">Home Assistant</h2>
+          <div class="muted" style="margin-top:5px">Sensores y estado de la casa conectados a XiaoZhi Care.</div>
+        </div>
+        <span id="haConnectionState" class="haState">
+          <span class="haDot"></span>
+          <span id="haConnectionText">Sin consultar</span>
+        </span>
+      </div>
+
+      <div class="haCards">
+        <div class="card">
+          <div class="panelTitle"><h2>Ambiente interior · Comedor</h2><span id="haIndoorStatus" class="counter">--</span></div>
+          <div class="haMetricGrid">
+            <div class="haMetric"><div class="haMetricLabel">Temperatura</div><div id="haIndoorTemperature" class="haMetricValue">--</div></div>
+            <div class="haMetric"><div class="haMetricLabel">Humedad</div><div id="haIndoorHumidity" class="haMetricValue">--</div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="panelTitle"><h2>Clima exterior</h2><span id="haWeatherStatus" class="counter">--</span></div>
+          <div class="haMetricGrid">
+            <div class="haMetric"><div class="haMetricLabel">Temperatura</div><div id="haOutdoorTemperature" class="haMetricValue">--</div></div>
+            <div class="haMetric"><div class="haMetricLabel">Humedad</div><div id="haOutdoorHumidity" class="haMetricValue">--</div></div>
+          </div>
+          <div id="haOutdoorCondition" class="haCondition">Estado: --</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:18px">
+        <div class="haEntityHead">
+          <div>
+            <h2 style="margin:0">Dispositivos detectados</h2>
+            <div class="muted" style="margin-top:4px">Entidades útiles descubiertas automáticamente en Home Assistant.</div>
+          </div>
+          <div class="actions">
+            <label class="haTechToggle">
+              <input id="haShowTechnical" type="checkbox">
+              Mostrar técnicas
+            </label>
+            <span id="haEntitiesCount" class="counter">Sin consultar</span>
+            <button id="haSaveAllowedBtn" class="secondary" type="button">Guardar permisos</button>
+            <button id="haDiscoverBtn" class="secondary" type="button">Detectar dispositivos</button>
+          </div>
+        </div>
+        <div id="haEntitiesList" class="haEntityGroups">
+          <div class="empty" style="grid-column:1/-1">Pulsá “Detectar dispositivos” para importar las entidades de Home Assistant.</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:18px">
+        <div class="panelTitle"><h2>Conexión</h2></div>
+        <p class="muted">CARE consulta Home Assistant dentro de la red local. El token de acceso nunca se envía al navegador.</p>
+        <div class="actions">
+          <button id="haRefreshBtn" class="primary" type="button">Actualizar</button>
+          <button id="haTestBtn" class="secondary" type="button">Probar conexión</button>
+        </div>
+      </div>
+    </section>
+
+
     <section id="section-maintenance" class="section">
       <div class="notice">Herramientas de mantenimiento para pruebas. No borra WiFi ni configuración de XiaoZhi. Usar con cuidado.</div>
       <div class="grid">
@@ -1144,6 +1246,427 @@ function hideAll(){for(const id of ['setupView','loginView','appView'])$(id).cla
 function showSetup(){resetPasswordVisibility();hideAll();$('setupView').classList.remove('hidden');$('status').textContent='Configurar seguridad';setTimeout(()=>$('setupPassword').focus(),0)}
 function showLogin(){resetPasswordVisibility();hideAll();$('loginView').classList.remove('hidden');$('status').textContent='Bloqueado';$('loginPassword').value='';setTimeout(()=>$('loginPassword').focus(),0)}
 let bloodPressure=[];
+function haConditionText(value){
+  const map={
+    clear_night:'Despejado',
+    cloudy:'Nublado',
+    exceptional:'Condición excepcional',
+    fog:'Niebla',
+    hail:'Granizo',
+    lightning:'Tormenta eléctrica',
+    lightning_rainy:'Tormenta con lluvia',
+    partlycloudy:'Parcialmente nublado',
+    pouring:'Lluvia intensa',
+    rainy:'Lluvia',
+    snowy:'Nieve',
+    snowy_rainy:'Aguanieve',
+    sunny:'Soleado',
+    windy:'Ventoso',
+    windy_variant:'Ventoso y nublado'
+  };
+  return map[value]||value||'--';
+}
+
+function haSetConnection(ok,text){
+  const state=$('haConnectionState');
+  state.classList.remove('ok','bad');
+  if(ok===true)state.classList.add('ok');
+  if(ok===false)state.classList.add('bad');
+  $('haConnectionText').textContent=text;
+}
+
+let haDiscoveredEntities=[];
+let haAllowedEntities=new Set();
+
+function haIsControllable(entity){
+  return [
+    'light','switch','climate','media_player',
+    'remote','cover','fan'
+  ].includes(entity.domain);
+}
+
+function haIsTechnical(entity){
+  const id=String(entity.entity_id||'').toLowerCase();
+  const name=String(entity.friendly_name||'').toLowerCase();
+
+  const technicalSuffixes=[
+    '_freeze',
+    '_sync_send',
+    '_sync_receive',
+    '_reverse',
+    '_nightlight'
+  ];
+
+  if(technicalSuffixes.some(s=>id.endsWith(s)))return true;
+
+  return [
+    'congelar',
+    'envío de sincronización',
+    'envio de sincronizacion',
+    'recepción de sincronización',
+    'recepcion de sincronizacion',
+    'inverso',
+    'luz nocturna'
+  ].some(label=>name.includes(label));
+}
+
+function haDomainTitle(domain){
+  const map={
+    light:'Luces',
+    switch:'Interruptores',
+    climate:'Clima',
+    media_player:'Multimedia',
+    remote:'Controles remotos',
+    cover:'Persianas y cubiertas',
+    fan:'Ventiladores',
+    sensor:'Sensores',
+    weather:'Clima exterior'
+  };
+  return map[domain]||domain;
+}
+
+function renderHomeAssistantEntities(entities){
+  const root=$('haEntitiesList');
+  root.innerHTML='';
+
+  haDiscoveredEntities=Array.isArray(entities)?entities:[];
+
+  const showTechnical=$('haShowTechnical')?.checked===true;
+  const hiddenTechnical=haDiscoveredEntities.filter(haIsTechnical).length;
+
+  const visible=haDiscoveredEntities.filter(entity=>
+    showTechnical || !haIsTechnical(entity)
+  );
+
+  const countText=
+    haDiscoveredEntities.length+' detectadas'+
+    (!showTechnical && hiddenTechnical
+      ? ' · '+hiddenTechnical+' técnicas ocultas'
+      : '');
+
+  $('haEntitiesCount').textContent=countText;
+
+  if(!visible.length){
+    root.innerHTML='<div class="empty" style="grid-column:1/-1">No se encontraron entidades compatibles.</div>';
+    return;
+  }
+
+  const grouped={};
+
+  for(const entity of visible){
+    const domain=entity.domain||'other';
+    if(!grouped[domain])grouped[domain]=[];
+    grouped[domain].push(entity);
+  }
+
+  const preferred=[
+    'light','switch','climate','media_player',
+    'remote','cover','fan','sensor','weather'
+  ];
+
+  for(const domain of preferred){
+    const items=grouped[domain];
+    if(!items||!items.length)continue;
+
+    items.sort((a,b)=>
+      String(a.friendly_name||a.entity_id)
+        .localeCompare(String(b.friendly_name||b.entity_id),'es')
+    );
+
+    const group=document.createElement('div');
+    group.className='haEntityGroup';
+
+    const title=document.createElement('h3');
+    title.textContent=haDomainTitle(domain)+' · '+items.length;
+    group.appendChild(title);
+
+    const list=document.createElement('div');
+    list.className='haEntityList';
+
+    for(const entity of items){
+      const row=document.createElement('div');
+      row.className='haEntityRow';
+
+      const info=document.createElement('div');
+
+      const name=document.createElement('div');
+      name.className='haEntityName';
+      name.textContent=entity.friendly_name||entity.entity_id;
+
+      const id=document.createElement('div');
+      id.className='haEntityId';
+      id.textContent=entity.entity_id;
+
+      info.appendChild(name);
+      info.appendChild(id);
+
+      const right=document.createElement('div');
+      right.style.display='flex';
+      right.style.flexDirection='column';
+      right.style.alignItems='flex-end';
+      right.style.gap='7px';
+
+      const state=document.createElement('div');
+      state.className='haEntityState';
+      state.textContent=entity.state||'--';
+      right.appendChild(state);
+
+      if(haIsControllable(entity)){
+        const label=document.createElement('label');
+        label.className='haAllowControl';
+
+        const checkbox=document.createElement('input');
+        checkbox.type='checkbox';
+        checkbox.className='haAllowEntity';
+        checkbox.dataset.entityId=entity.entity_id;
+        checkbox.checked=haAllowedEntities.has(entity.entity_id);
+
+        checkbox.addEventListener('change',()=>{
+          if(checkbox.checked){
+            haAllowedEntities.add(entity.entity_id);
+          }else{
+            haAllowedEntities.delete(entity.entity_id);
+          }
+        });
+
+        const span=document.createElement('span');
+        span.textContent='Permitir';
+
+        label.appendChild(checkbox);
+        label.appendChild(span);
+        right.appendChild(label);
+      }else{
+        const tag=document.createElement('div');
+        tag.className='haReadOnlyTag';
+        tag.textContent='Solo lectura';
+        right.appendChild(tag);
+      }
+
+      row.appendChild(info);
+      row.appendChild(right);
+      list.appendChild(row);
+    }
+
+    group.appendChild(list);
+    root.appendChild(group);
+  }
+}
+
+function haFriendlyNameFromEntityId(entityId){
+  const raw=String(entityId||'');
+  const dot=raw.indexOf('.');
+  const base=dot>=0?raw.slice(dot+1):raw;
+
+  return base
+    .replace(/_/g,' ')
+    .replace(/\b\w/g,c=>c.toUpperCase());
+}
+
+async function loadHomeAssistantAllowedPreview(){
+  try{
+    const [allowedResponse,namesResponse]=await Promise.all([
+      api('/api/home-assistant/allowed'),
+      api('/api/home-assistant/names')
+    ]);
+
+    const allowedData=allowedResponse.data||{};
+    const namesData=namesResponse.data||{};
+
+    const allowed=Array.isArray(allowedData.entity_ids)
+      ?allowedData.entity_ids
+      :[];
+
+    const savedNames=Array.isArray(namesData.entities)
+      ?namesData.entities
+      :[];
+
+    const nameMap=new Map(
+      savedNames
+        .filter(x=>x&&x.entity_id&&x.friendly_name)
+        .map(x=>[x.entity_id,x.friendly_name])
+    );
+
+    haAllowedEntities=new Set(allowed);
+
+    if(!allowed.length){
+      $('haEntitiesCount').textContent='0 guardadas';
+      $('haEntitiesList').innerHTML=
+        '<div class="empty" style="grid-column:1/-1">No hay dispositivos permitidos guardados. Pulsá “Detectar dispositivos” para elegirlos.</div>';
+      return;
+    }
+
+    const savedEntities=allowed.map(entityId=>{
+      const dot=String(entityId).indexOf('.');
+      const domain=dot>0?String(entityId).slice(0,dot):'';
+
+      return {
+        entity_id:entityId,
+        domain,
+        friendly_name:
+          nameMap.get(entityId)||
+          haFriendlyNameFromEntityId(entityId),
+        state:'guardado'
+      };
+    });
+
+    renderHomeAssistantEntities(savedEntities);
+    $('haEntitiesCount').textContent=
+      allowed.length+' guardadas';
+
+  }catch(e){
+    $('haEntitiesCount').textContent='Sin consultar';
+  }
+}
+
+async function loadHomeAssistantEntities(showMessage=true){
+  $('haEntitiesCount').textContent='Consultando...';
+
+  try{
+    const [entitiesResponse,allowedResponse]=await Promise.all([
+      api('/api/home-assistant/entities'),
+      api('/api/home-assistant/allowed')
+    ]);
+
+    const entityData=entitiesResponse.data||{};
+    const allowedData=allowedResponse.data||{};
+
+    const entities=Array.isArray(entityData.entities)
+      ?entityData.entities
+      :[];
+
+    const allowed=Array.isArray(allowedData.entity_ids)
+      ?allowedData.entity_ids
+      :[];
+
+    haAllowedEntities=new Set(allowed);
+    renderHomeAssistantEntities(entities);
+
+    if(showMessage){
+      showMsg(
+        'Home Assistant: '+entities.length+
+        ' entidades detectadas; '+
+        allowed.length+' permitidas.'
+      );
+    }
+  }catch(e){
+    $('haEntitiesCount').textContent='Error';
+    $('haEntitiesList').innerHTML=
+      '<div class="empty" style="grid-column:1/-1">No se pudieron importar las entidades de Home Assistant.</div>';
+
+    if(showMessage){
+      showMsg(
+        'No se pudieron detectar dispositivos: '+readableError(e.message),
+        'error'
+      );
+    }
+  }
+}
+
+async function saveHomeAssistantAllowed(){
+  const entityIds=[...haAllowedEntities].sort();
+
+  const byId=new Map(
+    (haDiscoveredEntities||[])
+      .filter(x=>x&&x.entity_id)
+      .map(x=>[x.entity_id,x])
+  );
+
+  const names=entityIds
+    .map(entityId=>{
+      const entity=byId.get(entityId);
+      if(!entity)return null;
+
+      const friendlyName=
+        String(entity.friendly_name||'').trim();
+
+      if(!friendlyName)return null;
+
+      return {
+        entity_id:entityId,
+        friendly_name:friendlyName
+      };
+    })
+    .filter(Boolean);
+
+  try{
+    const [permissionsResponse]=await Promise.all([
+      api(
+        '/api/home-assistant/allowed',
+        {
+          method:'PUT',
+          body:{entity_ids:entityIds},
+          csrfRequired:true
+        }
+      ),
+      api(
+        '/api/home-assistant/names',
+        {
+          method:'PUT',
+          body:{entities:names},
+          csrfRequired:true
+        }
+      )
+    ]);
+
+    const count=
+      permissionsResponse?.data?.count??entityIds.length;
+
+    showMsg(
+      'Permisos de Home Assistant guardados: '+
+      count+' dispositivos.'
+    );
+
+    await loadHomeAssistantAllowedPreview();
+  }catch(e){
+    showMsg(
+      'No se pudieron guardar los permisos: '+
+      readableError(e.message),
+      'error'
+    );
+  }
+}
+
+async function loadHomeAssistant(showMessage=false){
+  haSetConnection(null,'Consultando...');
+
+  try{
+    const response=await api('/api/home-assistant/status');
+    const data=response.data||{};
+    const connected=!!data.connected;
+
+    haSetConnection(connected,connected?'Conectado':'Sin conexión');
+
+    $('haIndoorStatus').textContent=data.indoor_available?'Disponible':'No disponible';
+    $('haIndoorTemperature').textContent=data.indoor_available?Number(data.indoor_temperature).toFixed(1).replace('.',',')+' °C':'--';
+    $('haIndoorHumidity').textContent=data.indoor_available?Math.round(Number(data.indoor_humidity))+' %':'--';
+
+    $('haWeatherStatus').textContent=data.weather_available?'Disponible':'No disponible';
+    $('haOutdoorTemperature').textContent=data.weather_available?Number(data.outdoor_temperature).toFixed(1).replace('.',',')+' °C':'--';
+    $('haOutdoorHumidity').textContent=data.weather_available?Math.round(Number(data.outdoor_humidity))+' %':'--';
+    $('haOutdoorCondition').textContent='Estado: '+(data.weather_available?haConditionText(data.outdoor_condition):'--');
+
+    if(showMessage){
+      showMsg(
+        connected?'Home Assistant respondió correctamente.':'CARE no pudo obtener datos de Home Assistant.',
+        connected?'ok':'error'
+      );
+    }
+  }catch(e){
+    haSetConnection(false,'Sin conexión');
+    $('haIndoorStatus').textContent='No disponible';
+    $('haWeatherStatus').textContent='No disponible';
+    $('haIndoorTemperature').textContent='--';
+    $('haIndoorHumidity').textContent='--';
+    $('haOutdoorTemperature').textContent='--';
+    $('haOutdoorHumidity').textContent='--';
+    $('haOutdoorCondition').textContent='Estado: --';
+
+    if(showMessage){
+      showMsg('No se pudo consultar Home Assistant: '+readableError(e.message),'error');
+    }
+  }
+}
+
 async function showApp(){hideAll();$('appView').classList.remove('hidden');if(authEnabled){$('changePasswordBtn').classList.remove('hidden');$('logoutBtn').classList.remove('hidden')}$('status').textContent=authEnabled?'Care listo':'Care listo · DEV sin contraseña';await loadPeople();await loadProfile();await Promise.all([loadPreferences(),loadRoutines(),loadPillbox(),loadReminders(),loadFamily(),loadMaintenance(),loadRecordings(),loadBloodPressure()]);setupPeopleFamilyUi();updatePersonFamilyOptions()}
 async function refreshAuth(){try{const j=await api('/api/auth/state',{redirectOn401:false});const s=j.data||{};authEnabled=s.authentication!==false;if(!s.configured){csrf='';showSetup();return}if(!s.authenticated){csrf='';showLogin();return}csrf=s.csrf||'';await showApp()}catch(e){hideAll();$('status').textContent='Sin conexión';showMsg('No se pudo consultar XiaoZhi Care: '+readableError(e.message),'error')}}
 $('showSetupPassword').addEventListener('change',e=>setPasswordVisibility(['setupPassword','setupConfirm'],e.target.checked));$('showLoginPassword').addEventListener('change',e=>setPasswordVisibility(['loginPassword'],e.target.checked));$('showChangePassword').addEventListener('change',e=>setPasswordVisibility(['currentPassword','newPassword','newPasswordConfirm'],e.target.checked));
@@ -1152,7 +1675,19 @@ $('loginForm').addEventListener('submit',async e=>{e.preventDefault();try{const 
 $('logoutBtn').onclick=async()=>{try{await api('/api/auth/logout',{method:'POST',body:{},csrfRequired:true,redirectOn401:false})}catch(e){}csrf='';showLogin();showMsg('Sesión cerrada.')};
 $('changePasswordBtn').onclick=()=>{$('passwordPanel').classList.toggle('hidden');if(!$('passwordPanel').classList.contains('hidden'))$('currentPassword').focus()};$('cancelPassword').onclick=()=>{$('passwordForm').reset();$('showChangePassword').checked=false;setPasswordVisibility(['currentPassword','newPassword','newPasswordConfirm'],false);$('passwordPanel').classList.add('hidden')};
 $('passwordForm').addEventListener('submit',async e=>{e.preventDefault();const cur=$('currentPassword').value,n=$('newPassword').value,c=$('newPasswordConfirm').value;if(n!==c)return showMsg('Las nuevas contraseñas no coinciden.','error');if(n.length<8)return showMsg('La nueva contraseña debe tener al menos 8 caracteres.','error');try{const j=await api('/api/auth/password',{method:'PUT',body:{current_password:cur,new_password:n},csrfRequired:true});csrf=(j.data&&j.data.csrf)||'';$('passwordForm').reset();$('passwordPanel').classList.add('hidden');showMsg('Contraseña actualizada.')}catch(err){showMsg(readableError(err.message),'error')}});
-for(const b of document.querySelectorAll('.tab'))b.addEventListener('click',()=>{for(const x of document.querySelectorAll('.tab'))x.classList.toggle('active',x===b);for(const s of document.querySelectorAll('.section'))s.classList.toggle('active',s.id==='section-'+b.dataset.tab)});
+for(const b of document.querySelectorAll('.tab'))b.addEventListener('click',()=>{
+  for(const x of document.querySelectorAll('.tab'))x.classList.toggle('active',x===b);
+  for(const s of document.querySelectorAll('.section'))s.classList.toggle('active',s.id==='section-'+b.dataset.tab);
+  if(b.dataset.tab==='homeassistant'){
+    loadHomeAssistant(false);
+    loadHomeAssistantAllowedPreview();
+  }
+});
+$('haRefreshBtn').onclick=()=>loadHomeAssistant(true);
+$('haTestBtn').onclick=()=>loadHomeAssistant(true);
+$('haDiscoverBtn').onclick=()=>loadHomeAssistantEntities(true);
+$('haSaveAllowedBtn').onclick=saveHomeAssistantAllowed;
+$('haShowTechnical').onchange=()=>renderHomeAssistantEntities(haDiscoveredEntities);
 function actionButton(text,kind,fn){const b=document.createElement('button');b.type='button';b.className=kind+' small';b.textContent=text;b.addEventListener('click',fn);return b}
 function empty(container,text){container.textContent='';const e=document.createElement('div');e.className='empty';e.textContent=text;container.appendChild(e)}
 function itemCard(title,meta,notes,onEdit,onDelete){const c=document.createElement('div');c.className='item';const top=document.createElement('div');top.className='itemTop';const info=document.createElement('div');const n=document.createElement('div');n.className='itemName';n.textContent=title;const m=document.createElement('div');m.className='itemMeta';m.textContent=meta;info.append(n,m);const acts=document.createElement('div');acts.className='actions';acts.append(actionButton('Editar','secondary',onEdit),actionButton('Eliminar','danger',onDelete));top.append(info,acts);c.appendChild(top);if(notes){const q=document.createElement('div');q.className='itemNotes';q.textContent=notes;c.appendChild(q)}return c}
