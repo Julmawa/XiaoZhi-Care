@@ -1336,9 +1336,26 @@ void Application::ConfirmCareAlertFromButton(const std::string& target_id) {
             return;
         }
 
-        // TODO: confirmar el aviso especifico y limpiar solo sus estados.
+        // Segunda comprobacion antes de registrar el ACK.
+        if (!::xiaozhi_care_ack_pending_for_target(target_id.c_str())) {
+            ESP_LOGI(TAG,
+                     "Care physical ACK ignored: no longer pending: %s",
+                     target_id.c_str());
+            return;
+        }
+
+        const bool acknowledged =
+            ::xiaozhi_care_acknowledge_target(target_id.c_str());
+
+        if (!acknowledged) {
+            ESP_LOGW(TAG,
+                     "Care physical ACK failed: %s",
+                     target_id.c_str());
+            return;
+        }
+
         ESP_LOGI(TAG,
-                 "Care physical ACK target validated: %s",
+                 "Care physical ACK registered: %s",
                  target_id.c_str());
     });
 }
@@ -2354,6 +2371,20 @@ bool Application::CancelCareAckPromptDelayForTarget(
     CancelCareAckPromptDelay();
     return true;
 }
+bool Application::ClearCareAckPromptAudioForTarget(
+    const std::string& target_id) {
+
+    if (!xiaozhi_care::BelongsToConfirmedTarget(
+            care_ack_prompt_audio_target_, target_id)) {
+        return false;
+    }
+
+    care_ack_prompt_active_ = false;
+    care_ack_prompt_audio_cache_.clear();
+    care_ack_prompt_audio_target_.clear();
+
+    return true;
+}
 void Application::CancelCareAckPromptDelay() {
     if (care_ack_prompt_delay_timer_handle_ != nullptr) {
         esp_timer_stop(care_ack_prompt_delay_timer_handle_);
@@ -2601,6 +2632,7 @@ bool Application::MaybeStartCareAcknowledgementListening() {
         // Llegamos aquí por MAIN_EVENT_PLAYBACK_DRAINED: la pregunta terminó.
         care_ack_prompt_active_ = false;
         care_ack_prompt_audio_cache_.clear();
+        care_ack_prompt_audio_target_.clear();
         ESP_LOGI(TAG,
                  "DP044B1.3 acknowledgement prompt finished: target=%s",
                  target.c_str());
@@ -2612,6 +2644,7 @@ bool Application::MaybeStartCareAcknowledgementListening() {
                                            &prompt_duration_ms) &&
             !prompt_audio.empty()) {
             care_ack_prompt_audio_cache_ = std::move(prompt_audio);
+            care_ack_prompt_audio_target_ = target;
             care_ack_prompt_active_ = true;
 
             ESP_LOGI(TAG,
@@ -2636,6 +2669,7 @@ bool Application::MaybeStartCareAcknowledgementListening() {
                      target.c_str());
             care_ack_prompt_active_ = false;
             care_ack_prompt_audio_cache_.clear();
+            care_ack_prompt_audio_target_.clear();
             play_popup_on_listening_ = true;
         } else {
             // Sin audio configurado conservamos el fallback seguro de B1.2.

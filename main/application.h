@@ -185,6 +185,7 @@ private:
     // completamente antes de abrir el micrófono.
     bool care_ack_prompt_active_ = false;
     std::string care_ack_prompt_audio_cache_;
+    std::string care_ack_prompt_audio_target_;
 
     // DP044B1_4B_DELAYED_ACK_PROMPT
     // Espera de 60 s entre el final del aviso y la pregunta de confirmación.
@@ -268,6 +269,7 @@ private:
 
     // DP044B1_4_EXTENDED_ACK_WINDOW
     void ArmCareAckResponseWindow(const std::string& target);
+    bool ClearCareAckPromptAudioForTarget(const std::string& target_id);
     bool ClearCareAckResponseWindowForTarget(const std::string& target_id);
     void ClearCareAckResponseWindow();
     void HandleCareAckResponseTimeout();
