@@ -8,6 +8,8 @@
 #include "mcp_server.h"
 #include "lamp_controller.h"
 #include "led/single_led.h"
+#include "../../../installer/windows/v2/care_adapter/physical_ack_button.h"
+#include <esp_timer.h>
 
 #include <esp_log.h>
 #include <driver/i2c_master.h>
@@ -63,6 +65,9 @@ class CompactWifiBoardLCD : public WifiBoard {
 private:
  
     Button boot_button_;
+    Button touch_button_;
+    xiaozhi_care::PhysicalAckButton physical_ack_button_;
+    bool suppress_touch_click_ = false;
     LcdDisplay* display_;
 
     void InitializeSpi() {
@@ -131,6 +136,39 @@ private:
             }
             app.ToggleChatState();
         });
+
+        // TTP223 activo en nivel alto (GPIO38).
+        // La confirmacion se evalua al SOLTAR, nunca al mantener pulsado.
+        touch_button_.OnPressDown([this]() {
+            suppress_touch_click_ = false;
+            physical_ack_button_.OnPressDown(
+                esp_timer_get_time(),
+                Application::GetInstance().GetPendingCareAlertTarget());
+        });
+
+        touch_button_.OnPressUp([this]() {
+            auto& app = Application::GetInstance();
+            const auto result = physical_ack_button_.OnPressUp(
+                esp_timer_get_time(), app.GetPendingCareAlertTarget());
+            // Cualquier pulsacion larga es neutra para la conversacion,
+            // haya o no haya un aviso pendiente.
+            suppress_touch_click_ =
+                (result.action != xiaozhi_care::PhysicalButtonAction::NormalClick);
+            if (result.action == xiaozhi_care::PhysicalButtonAction::ConfirmAlert) {
+                app.ConfirmCareAlertFromButton(result.target_id);
+            }
+        });
+
+        touch_button_.OnClick([this]() {
+            if (suppress_touch_click_) {
+                suppress_touch_click_ = false;
+                return;
+            }
+            auto& app = Application::GetInstance();
+            if (app.GetDeviceState() != kDeviceStateStarting) {
+                app.ToggleChatState();
+            }
+        });
     }
 
     // 物联网初始化，添加对 AI 可见设备
@@ -140,7 +178,8 @@ private:
 
 public:
     CompactWifiBoardLCD() :
-        boot_button_(BOOT_BUTTON_GPIO) {
+        boot_button_(BOOT_BUTTON_GPIO),
+        touch_button_(TOUCH_BUTTON_GPIO, true, 3000) {
         InitializeSpi();
         InitializeLcdDisplay();
         InitializeButtons();

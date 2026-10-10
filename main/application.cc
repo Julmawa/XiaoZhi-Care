@@ -1354,9 +1354,29 @@ void Application::ConfirmCareAlertFromButton(const std::string& target_id) {
             return;
         }
 
+        // Only modify state belonging to the acknowledged target. All code
+        // below runs on Application's scheduled/main-loop context.
+        if (care_ack_listening_target_ == target_id) {
+            care_ack_listening_requested_ = false;
+            care_ack_listening_target_.clear();
+        }
+        {
+            std::lock_guard<std::mutex> lock(care_ack_physical_mutex_);
+            if (care_ack_physical_target_ == target_id) {
+                care_ack_physical_target_.clear();
+            }
+        }
+        ClearCareAckPromptAudioForTarget(target_id);
+        CancelCareAckPromptDelayForTarget(target_id);
+        ClearCareAckResponseWindowForTarget(target_id);
+
+        // Do not abort speech, reset the decoder, open a protocol connection,
+        // or unpause the radio: another reminder may now own those resources.
+        auto* led = Board::GetInstance().GetLed();
+        const bool visual_ok = led != nullptr && led->ShowCareAckConfirmation();
         ESP_LOGI(TAG,
-                 "Care physical ACK registered: %s",
-                 target_id.c_str());
+                 "Care physical ACK registered: %s visual=%d",
+                 target_id.c_str(), visual_ok ? 1 : 0);
     });
 }
 
@@ -2629,6 +2649,12 @@ bool Application::MaybeStartCareAcknowledgementListening() {
                  static_cast<unsigned>(care_ack_listening_cycles_ + 1),
                  static_cast<unsigned>(kCareAckMaxListeningCycles));
     } else if (care_ack_prompt_active_) {
+        // The current listening request may have changed while audio drained.
+        // Never consume another target's prompt here.
+        if (care_ack_prompt_audio_target_ != target) {
+            ESP_LOGW(TAG, "Care ACK prompt owner mismatch; preserving audio state");
+            return false;
+        }
         // Llegamos aquí por MAIN_EVENT_PLAYBACK_DRAINED: la pregunta terminó.
         care_ack_prompt_active_ = false;
         care_ack_prompt_audio_cache_.clear();
