@@ -58,6 +58,8 @@ public:
                     const std::string& occurrence,
                     std::time_t now = 0) const;
     bool HasPendingTarget(const std::string& target_id) const;
+    uint32_t PendingPhysicalTicket(const std::string& target_id) const;
+    bool AcknowledgePhysicalTicket(const std::string& target_id, uint32_t ticket);
     ReminderAckResult AcknowledgeTarget(const std::string& target_id);
     ReminderAckResult AcknowledgeLatest();
 

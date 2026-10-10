@@ -1,4 +1,4 @@
-﻿#include "care_voice/reminder_voice_runtime.h"
+#include "care_voice/reminder_voice_runtime.h"
 
 #include <algorithm>
 #include <cctype>
@@ -448,6 +448,42 @@ bool ReminderVoiceRuntime::HasPendingTarget(const std::string& target_id) const 
     return false;
 }
 
+// Physical ACK: a sequence ticket identifies one *presentation* of one
+// occurrence. Never acknowledge by target alone: IDs may repeat on other days.
+uint32_t ReminderVoiceRuntime::PendingPhysicalTicket(const std::string& target_id) const {
+    if (target_id.empty()) return 0;
+    const std::time_t now = std::time(nullptr);
+    std::lock_guard<std::mutex> lock(ack_mutex_);
+    const AckEntry* newest = nullptr;
+    for (const auto& entry : ack_entries_) {
+        if (entry.acknowledged || !entry.attempts || entry.last_presented_at <= 0) continue;
+        if (std::find(entry.target_ids.begin(), entry.target_ids.end(), target_id) == entry.target_ids.end()) continue;
+        if (now > 0 && now - entry.last_presented_at > static_cast<std::time_t>(kAckResponseWindowSeconds)) continue;
+        if (!newest || entry.sequence > newest->sequence) newest = &entry;
+    }
+    return newest ? newest->sequence : 0;
+}
+
+bool ReminderVoiceRuntime::AcknowledgePhysicalTicket(const std::string& target_id, uint32_t ticket) {
+    if (target_id.empty() || ticket == 0) return false;
+    const std::time_t now = std::time(nullptr);
+    std::lock_guard<std::mutex> lock(ack_mutex_);
+    // Find the most recently presented entry for this target, and require
+    // an exact sequence match under the SAME lock as the ACK write.
+    AckEntry* newest = nullptr;
+    for (auto& entry : ack_entries_) {
+        if (!entry.attempts || entry.last_presented_at <= 0) continue;
+        if (std::find(entry.target_ids.begin(), entry.target_ids.end(), target_id) == entry.target_ids.end()) continue;
+        if (now > 0 && now - entry.last_presented_at > static_cast<std::time_t>(kAckResponseWindowSeconds)) continue;
+        if (!newest || entry.sequence > newest->sequence) newest = &entry;
+    }
+    if (!newest || newest->acknowledged || newest->sequence != ticket) return false;
+    newest->acknowledged = true;
+    newest->sequence = ++ack_sequence_;
+    ESP_LOGI(kTag, "Physical ACK: target=%s occurrence=%s", target_id.c_str(), newest->occurrence.c_str());
+    return true;
+}
+
 ReminderAckResult ReminderVoiceRuntime::AcknowledgeTarget(const std::string& target_id) {
     ReminderAckResult result;
     if (target_id.empty()) return result;
@@ -697,3 +733,13 @@ extern "C" bool xiaozhi_care_acknowledge_target(const char* target_id) {
 }
 
 
+
+// Ticketed physical-only bridges; voice acknowledgement APIs remain unchanged.
+extern "C" uint32_t xiaozhi_care_ack_physical_ticket(const char* target) {
+    if (!target || !*target) return 0;
+    return xiaozhi_care::voice::ReminderVoiceRuntime::GetInstance().PendingPhysicalTicket(target);
+}
+extern "C" bool xiaozhi_care_ack_physical_confirm(const char* target, uint32_t ticket) {
+    if (!target || !*target || !ticket) return false;
+    return xiaozhi_care::voice::ReminderVoiceRuntime::GetInstance().AcknowledgePhysicalTicket(target, ticket);
+}

@@ -25,6 +25,8 @@
 // DP044B_UNIVERSAL_ACK
 extern "C" bool xiaozhi_care_ack_pending_for_target(const char* target_id);
 extern "C" bool xiaozhi_care_acknowledge_target(const char* target_id);
+extern "C" uint32_t xiaozhi_care_ack_physical_ticket(const char* target_id);
+extern "C" bool xiaozhi_care_ack_physical_confirm(const char* target_id, uint32_t ticket);
 extern "C" uint32_t xiaozhi_care_ack_prompt_delay_seconds(void);
 extern "C" uint8_t xiaozhi_care_ack_max_presentations(void);
 
@@ -1319,64 +1321,38 @@ bool Application::IsCareAlertPendingForPhysicalAck() {
     return ::xiaozhi_care_ack_pending_for_target(target.c_str());
 }
 
-void Application::ConfirmCareAlertFromButton(const std::string& target_id) {
-    if (target_id.empty()) {
-        return;
-    }
-
-    Schedule([this, target_id]() {
-        const std::string current_target = GetPendingCareAlertTarget();
-
-        if (!xiaozhi_care::CanConfirmPhysicalAck(
-                target_id,
-                current_target,
-                !current_target.empty())) {
-            ESP_LOGW(TAG,
-                     "Care physical ACK rejected: target changed");
+void Application::ConfirmCareAlertFromButton(uint32_t pressed_ticket) {
+    if (!pressed_ticket) return;
+    // Schedule is the only work executed by the button's FreeRTOS callback.
+    Schedule([this, pressed_ticket]() {
+        if (care_ack_physical_ticket_.load() != pressed_ticket) return;
+        std::string target;
+        {
+            std::lock_guard<std::mutex> lock(care_ack_physical_mutex_);
+            target = care_ack_physical_target_;
+        }
+        if (target.empty()) return;
+        // Atomic check-and-ACK in the runtime: protects against a new
+        // occurrence with the same target ID or an intervening voice ACK.
+        if (!::xiaozhi_care_ack_physical_confirm(target.c_str(), pressed_ticket)) {
+            ESP_LOGI(TAG, "Care physical ACK rejected: stale occurrence/ticket");
             return;
         }
-
-        // Segunda comprobacion antes de registrar el ACK.
-        if (!::xiaozhi_care_ack_pending_for_target(target_id.c_str())) {
-            ESP_LOGI(TAG,
-                     "Care physical ACK ignored: no longer pending: %s",
-                     target_id.c_str());
-            return;
-        }
-
-        const bool acknowledged =
-            ::xiaozhi_care_acknowledge_target(target_id.c_str());
-
-        if (!acknowledged) {
-            ESP_LOGW(TAG,
-                     "Care physical ACK failed: %s",
-                     target_id.c_str());
-            return;
-        }
-
-        // Only modify state belonging to the acknowledged target. All code
-        // below runs on Application's scheduled/main-loop context.
-        if (care_ack_listening_target_ == target_id) {
+        care_ack_physical_ticket_.store(0);
+        if (care_ack_listening_target_ == target) {
             care_ack_listening_requested_ = false;
             care_ack_listening_target_.clear();
         }
         {
             std::lock_guard<std::mutex> lock(care_ack_physical_mutex_);
-            if (care_ack_physical_target_ == target_id) {
-                care_ack_physical_target_.clear();
-            }
+            if (care_ack_physical_target_ == target) care_ack_physical_target_.clear();
         }
-        ClearCareAckPromptAudioForTarget(target_id);
-        CancelCareAckPromptDelayForTarget(target_id);
-        ClearCareAckResponseWindowForTarget(target_id);
-
-        // Do not abort speech, reset the decoder, open a protocol connection,
-        // or unpause the radio: another reminder may now own those resources.
+        ClearCareAckPromptAudioForTarget(target);
+        CancelCareAckPromptDelayForTarget(target);
+        ClearCareAckResponseWindowForTarget(target);
         auto* led = Board::GetInstance().GetLed();
-        const bool visual_ok = led != nullptr && led->ShowCareAckConfirmation();
-        ESP_LOGI(TAG,
-                 "Care physical ACK registered: %s visual=%d",
-                 target_id.c_str(), visual_ok ? 1 : 0);
+        const bool visual_ok = led && led->ShowCareAckConfirmation();
+        ESP_LOGI(TAG, "Care physical ACK registered: %s visual=%d", target.c_str(), visual_ok ? 1 : 0);
     });
 }
 
@@ -2357,6 +2333,9 @@ bool Application::RequestCareAcknowledgementListening(const std::string& target_
             std::lock_guard<std::mutex> lock(care_ack_physical_mutex_);
             care_ack_physical_target_ = target_id;
         }
+        // Published only after runtime registered the presented occurrence.
+        // Callbacks read this atomic without touching the ACK mutex.
+        care_ack_physical_ticket_.store(::xiaozhi_care_ack_physical_ticket(target_id.c_str()));
         care_ack_listening_target_ = target_id;
         care_ack_listening_requested_ = true;
         ClearCareAckResponseWindow();

@@ -8,7 +8,6 @@
 #include "mcp_server.h"
 #include "lamp_controller.h"
 #include "led/single_led.h"
-#include "../../../installer/windows/v2/care_adapter/physical_ack_button.h"
 #include <esp_timer.h>
 
 #include <esp_log.h>
@@ -66,8 +65,9 @@ private:
  
     Button boot_button_;
     Button touch_button_;
-    xiaozhi_care::PhysicalAckButton physical_ack_button_;
-    bool suppress_touch_click_ = false;
+    int64_t touch_down_us_ = 0;
+    uint32_t touch_ticket_ = 0;
+    bool touch_is_down_ = false;
     LcdDisplay* display_;
 
     void InitializeSpi() {
@@ -137,37 +137,26 @@ private:
             app.ToggleChatState();
         });
 
-        // TTP223 activo en nivel alto (GPIO38).
-        // La confirmacion se evalua al SOLTAR, nunca al mantener pulsado.
+        // Never enter Care runtime/mutexes from the iot_button callback.
         touch_button_.OnPressDown([this]() {
-            suppress_touch_click_ = false;
-            physical_ack_button_.OnPressDown(
-                esp_timer_get_time(),
-                Application::GetInstance().GetPendingCareAlertTarget());
+            touch_is_down_ = true;
+            touch_down_us_ = esp_timer_get_time();
+            touch_ticket_ = Application::GetInstance().GetCarePhysicalTicket();
         });
-
         touch_button_.OnPressUp([this]() {
-            auto& app = Application::GetInstance();
-            const auto result = physical_ack_button_.OnPressUp(
-                esp_timer_get_time(), app.GetPendingCareAlertTarget());
-            // Cualquier pulsacion larga es neutra para la conversacion,
-            // haya o no haya un aviso pendiente.
-            suppress_touch_click_ =
-                (result.action != xiaozhi_care::PhysicalButtonAction::NormalClick);
-            if (result.action == xiaozhi_care::PhysicalButtonAction::ConfirmAlert) {
-                app.ConfirmCareAlertFromButton(result.target_id);
+            if (!touch_is_down_) return;
+            touch_is_down_ = false;
+            const int64_t elapsed = esp_timer_get_time() - touch_down_us_;
+            const uint32_t released_ticket = Application::GetInstance().GetCarePhysicalTicket();
+            if (elapsed >= 3000000 && touch_ticket_ && touch_ticket_ == released_ticket) {
+                Application::GetInstance().ConfirmCareAlertFromButton(touch_ticket_);
             }
+            touch_ticket_ = 0;
         });
-
+        // The button library never emits SINGLE_CLICK for LONG_PRESS_UP.
         touch_button_.OnClick([this]() {
-            if (suppress_touch_click_) {
-                suppress_touch_click_ = false;
-                return;
-            }
             auto& app = Application::GetInstance();
-            if (app.GetDeviceState() != kDeviceStateStarting) {
-                app.ToggleChatState();
-            }
+            if (app.GetDeviceState() != kDeviceStateStarting) app.ToggleChatState();
         });
     }
 

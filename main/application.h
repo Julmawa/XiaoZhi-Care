@@ -114,7 +114,8 @@ public:
     // DP044B3_PHYSICAL_ACK
     std::string GetPendingCareAlertTarget();
     bool IsCareAlertPendingForPhysicalAck();
-    void ConfirmCareAlertFromButton(const std::string& target_id);
+    uint32_t GetCarePhysicalTicket() const { return care_ack_physical_ticket_.load(); }
+    void ConfirmCareAlertFromButton(uint32_t pressed_ticket);
     void ConfirmPendingCareAlertFromTouch();
 
     void Reboot();
@@ -206,6 +207,7 @@ private:
     // DP044B3_PHYSICAL_ACK
     std::mutex care_ack_physical_mutex_;
     std::string care_ack_physical_target_;
+    std::atomic<uint32_t> care_ack_physical_ticket_{0};
 
     DeviceStateMachine state_machine_;
     ListeningMode listening_mode_ = kListeningModeAutoStop;
