@@ -1,3 +1,4 @@
+#include "../installer/windows/v2/care_adapter/ack_target_guard.h"
 #include "application.h"
 #include "care_radio/radio_service.h"
 #include "assets.h"
@@ -1326,7 +1327,10 @@ void Application::ConfirmCareAlertFromButton(const std::string& target_id) {
     Schedule([this, target_id]() {
         const std::string current_target = GetPendingCareAlertTarget();
 
-        if (current_target != target_id) {
+        if (!xiaozhi_care::CanConfirmPhysicalAck(
+                target_id,
+                current_target,
+                !current_target.empty())) {
             ESP_LOGW(TAG,
                      "Care physical ACK rejected: target changed");
             return;
