@@ -1,0 +1,33 @@
+﻿{
+    "schema":  "xiaozhi-care-hardware-manifest",
+    "schema_version":  1,
+    "chip":  "ESP32-S3",
+    "flash_mb":  16,
+    "psram_mb":  8,
+    "xiaozhi_version":  "2.5.1",
+    "board_sku":  "bread-compact-wifi-lcd",
+    "app_elf_sha256":  "a54875813dbf28373d505dacbf1840b98a9dca727798a18a93cb441e9a7afef5",
+    "source_files":  [
+                         {
+                             "path":  "build/default/sdkconfig",
+                             "sha256":  "5b204e29611cde8ea95ad3225adae8f1793ebef8571074981e86e07284449d9d"
+                         },
+                         {
+                             "path":  "main/boards/bread-compact-wifi-lcd/config.h",
+                             "sha256":  "e78a8088ac18af9835a3856a2329151a9c547d0578f79b7cff6f175d318ec662"
+                         },
+                         {
+                             "path":  "main/boards/bread-compact-wifi-lcd/compact_wifi_board_lcd.cc",
+                             "sha256":  "03779b91051589aafec42af6d1996a15690a56090c2c732181975ac9306db336"
+                         },
+                         {
+                             "path":  "main/led/single_led.cc",
+                             "sha256":  "4c54622ac083a5f9822ba50eff45588ee01d85f33c900e6efdbd930894ea44d3"
+                         },
+                         {
+                             "path":  "main/led/single_led.h",
+                             "sha256":  "bad613b25945109fc870e7fa860924871ab137581bb1f9402b0f45bd1b248b11"
+                         }
+                     ],
+    "partial_config_sha256":  "11f52bdea0a0dfe22701524b9526bd58f2736f9f3bad071c7c656454bc4ec20d"
+}
