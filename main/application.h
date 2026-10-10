@@ -262,11 +262,13 @@ private:
 
     // DP044B1_4B_DELAYED_ACK_PROMPT
     void ArmCareAckPromptDelay(const std::string& target);
+    bool CancelCareAckPromptDelayForTarget(const std::string& target_id);
     void CancelCareAckPromptDelay();
     void HandleCareAckPromptDelayElapsed();
 
     // DP044B1_4_EXTENDED_ACK_WINDOW
     void ArmCareAckResponseWindow(const std::string& target);
+    bool ClearCareAckResponseWindowForTarget(const std::string& target_id);
     void ClearCareAckResponseWindow();
     void HandleCareAckResponseTimeout();
 

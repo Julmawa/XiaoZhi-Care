@@ -2339,6 +2339,21 @@ bool Application::RequestCareAcknowledgementListening(const std::string& target_
     return true;
 }
 
+bool Application::CancelCareAckPromptDelayForTarget(
+    const std::string& target_id) {
+
+    if (target_id.empty()) {
+        return false;
+    }
+
+    if (!xiaozhi_care::BelongsToConfirmedTarget(
+            care_ack_prompt_delay_target_, target_id)) {
+        return false;
+    }
+
+    CancelCareAckPromptDelay();
+    return true;
+}
 void Application::CancelCareAckPromptDelay() {
     if (care_ack_prompt_delay_timer_handle_ != nullptr) {
         esp_timer_stop(care_ack_prompt_delay_timer_handle_);
@@ -2441,6 +2456,21 @@ void Application::HandleCareAckPromptDelayElapsed() {
     MaybeStartCareAcknowledgementListening();
 }
 
+bool Application::ClearCareAckResponseWindowForTarget(
+    const std::string& target_id) {
+
+    if (target_id.empty()) {
+        return false;
+    }
+
+    if (!xiaozhi_care::BelongsToConfirmedTarget(
+            care_ack_response_target_, target_id)) {
+        return false;
+    }
+
+    ClearCareAckResponseWindow();
+    return true;
+}
 void Application::ClearCareAckResponseWindow() {
     if (care_ack_response_timer_handle_ != nullptr) {
         esp_timer_stop(care_ack_response_timer_handle_);
