@@ -114,6 +114,7 @@ public:
     // DP044B3_PHYSICAL_ACK
     std::string GetPendingCareAlertTarget();
     bool IsCareAlertPendingForPhysicalAck();
+    void ConfirmCareAlertFromButton(const std::string& target_id);
     void ConfirmPendingCareAlertFromTouch();
 
     void Reboot();

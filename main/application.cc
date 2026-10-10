@@ -1318,6 +1318,27 @@ bool Application::IsCareAlertPendingForPhysicalAck() {
     return ::xiaozhi_care_ack_pending_for_target(target.c_str());
 }
 
+void Application::ConfirmCareAlertFromButton(const std::string& target_id) {
+    if (target_id.empty()) {
+        return;
+    }
+
+    Schedule([this, target_id]() {
+        const std::string current_target = GetPendingCareAlertTarget();
+
+        if (current_target != target_id) {
+            ESP_LOGW(TAG,
+                     "Care physical ACK rejected: target changed");
+            return;
+        }
+
+        // TODO: confirmar el aviso especifico y limpiar solo sus estados.
+        ESP_LOGI(TAG,
+                 "Care physical ACK target validated: %s",
+                 target_id.c_str());
+    });
+}
+
 void Application::ConfirmPendingCareAlertFromTouch() {
     Schedule([this]() {
         std::string target;
