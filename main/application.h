@@ -112,6 +112,7 @@ public:
     void StopListening();
 
     // DP044B3_PHYSICAL_ACK
+    std::string GetPendingCareAlertTarget();
     bool IsCareAlertPendingForPhysicalAck();
     void ConfirmPendingCareAlertFromTouch();
 

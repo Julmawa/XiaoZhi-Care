@@ -1287,6 +1287,23 @@ void Application::StopListening() { xEventGroupSetBits(event_group_, MAIN_EVENT_
 
 
 // DP044B3_PHYSICAL_ACK
+std::string Application::GetPendingCareAlertTarget() {
+    std::string target;
+    {
+        std::lock_guard<std::mutex> lock(care_ack_physical_mutex_);
+        target = care_ack_physical_target_;
+    }
+
+    if (target.empty()) {
+        return {};
+    }
+
+    if (!::xiaozhi_care_ack_pending_for_target(target.c_str())) {
+        return {};
+    }
+
+    return target;
+}
 bool Application::IsCareAlertPendingForPhysicalAck() {
     std::string target;
     {
