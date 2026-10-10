@@ -1329,6 +1329,9 @@ void Application::ConfirmCareAlertFromButton(uint32_t pressed_ticket) {
         std::string target;
         {
             std::lock_guard<std::mutex> lock(care_ack_physical_mutex_);
+            // Read ticket + associated target coherently, even if another
+            // task invalidates the publication while this task is waiting.
+            if (care_ack_physical_ticket_.load() != pressed_ticket) return;
             target = care_ack_physical_target_;
         }
         if (target.empty()) return;
@@ -2328,14 +2331,17 @@ bool Application::RequestCareAcknowledgementListening(const std::string& target_
     if (target_id.empty()) return false;
 
     Schedule([this, target_id]() {
-        // DP044B3_PHYSICAL_ACK
+        // Invalidate the previous publication BEFORE changing its target.
+        // Button callbacks only read the atomic ticket; never touch ACK mutexes.
+        // A press that overlaps an alert transition cannot authorize the new one.
+        care_ack_physical_ticket_.store(0);
+        const uint32_t new_ticket = ::xiaozhi_care_ack_physical_ticket(target_id.c_str());
         {
             std::lock_guard<std::mutex> lock(care_ack_physical_mutex_);
-            care_ack_physical_target_ = target_id;
+            care_ack_physical_target_ = new_ticket ? target_id : std::string();
         }
-        // Published only after runtime registered the presented occurrence.
-        // Callbacks read this atomic without touching the ACK mutex.
-        care_ack_physical_ticket_.store(::xiaozhi_care_ack_physical_ticket(target_id.c_str()));
+        // Publish LAST, after the runtime lookup and target update are complete.
+        care_ack_physical_ticket_.store(new_ticket);
         care_ack_listening_target_ = target_id;
         care_ack_listening_requested_ = true;
         ClearCareAckResponseWindow();
