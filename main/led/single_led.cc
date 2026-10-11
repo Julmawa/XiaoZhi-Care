@@ -3,7 +3,7 @@
 #include <esp_log.h> 
 
 #define TAG "SingleLed"
-#define LED_COUNT 12
+#define LED_COUNT 7
 
 #define DEFAULT_BRIGHTNESS 4
 #define HIGH_BRIGHTNESS 16

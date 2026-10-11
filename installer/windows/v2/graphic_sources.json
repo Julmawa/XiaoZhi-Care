@@ -1,0 +1,7 @@
+{
+  "schema": "xiaozhi-care-graphic-sources-v1",
+  "source_url": "https://xiaozhi.me/tools/assets-generator/",
+  "source_sha256": "90ffbb5932b0ba80126d3dbc249ce577ae7fbc447b9cadb4b54d3ae4b8bd5be8",
+  "font_sha256": "21f517503683dba20172bde4cff2e45ccdf496e713ecd1b8ce1eb09f12d9f6e2",
+  "notes": "Existing user-generated assets; font matches esp_emote_assets 0.1.2. Only 30px and 64px supplied. Source contains no voice models."
+}

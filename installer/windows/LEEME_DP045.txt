@@ -1,0 +1,26 @@
+DP-045 - Etapa 1: selector de preferencias graficas, SIN instalacion.
+
+Archivos para copiar dentro de C:\XiaoZhi_Care_Installer_V2\installer\windows\v2\:
+  v2\graphic_profiles.py
+  v2\test_graphic_profiles.py
+
+Prototipo opcional: ejecutar SELECCIONAR_GRAFICOS_DP045.bat desde esta carpeta.
+Genera solo seleccion_grafica_dp045.json y NO escribe en la ESP32.
+
+El ZIP que enviaste NO contiene preparar_paquete.ps1; el unico BAT
+CREAR_INSTALADOR_FINAL.bat llama a ese archivo ausente. Por ese motivo
+NO se incluye aqui una integracion engañosa con el instalador final.
+
+Adicionalmente, no se incluyeron paquetes de recursos completos y
+verificados para todos los tamanos. Todas las selecciones quedan
+PENDIENTE_VERIFICACION; nunca autorizan grabacion.
+
+Proximos requisitos:
+- Incorporar preparar_paquete.ps1 y el launcher real del instalador;
+- Proveer catalogo autentico de paquetes completos de voz + fuentes + emojis;
+- Verificar capacidad de particion, coincidencia de SKU/resolucion y hashes;
+- Evitar cambiar graficos desde el firmware en uso (sin interferir con voz).
+
+Prueba:
+  cd v2
+  python -m unittest discover -p "test_*.py" -v

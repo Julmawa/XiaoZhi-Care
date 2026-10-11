@@ -16,7 +16,7 @@ $script:XzText = @{
     progress_done = @{ es='{0}% completado'; en='{0}% complete'; pt='{0}% concluido' }
     esptool_code = @{ es='esptool termino con codigo {0}'; en='esptool exited with code {0}'; pt='esptool terminou com codigo {0}' }
 
-    installer_title = @{ es='XIAOZHI CARE - INSTALADOR V1'; en='XIAOZHI CARE - INSTALLER V1'; pt='XIAOZHI CARE - INSTALADOR V1' }
+    installer_title = @{ es='XIAOZHI CARE - INSTALADOR V2 - DP-045'; en='XIAOZHI CARE - INSTALLER V2 - DP-045'; pt='XIAOZHI CARE - INSTALADOR V2 - DP-045' }
     assisted_install = @{ es='Instalacion asistida para usuarios sin entorno de desarrollo.'; en='Assisted installation for users without a development environment.'; pt='Instalacao assistida para usuarios sem ambiente de desenvolvimento.' }
     compatibility = @{ es='COMPATIBILIDAD DE ESTA VERSION'; en='COMPATIBILITY OF THIS VERSION'; pt='COMPATIBILIDADE DESTA VERSAO' }
     compat_base = @{ es='  - XiaoZhi previamente instalado y funcionando'; en='  - XiaoZhi already installed and working'; pt='  - XiaoZhi previamente instalado e funcionando' }

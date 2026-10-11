@@ -415,6 +415,17 @@ bool Assets::LvglStrategy::Apply(Assets* assets, bool refresh_display_theme) {
         ESP_LOGI(TAG, "Refreshing display theme...");
 
         auto current_theme = display->GetTheme();
+        // DP-045 packages declare the theme selected in the offline installer.
+        // Existing assets keep their current theme; only the two built-in names
+        // are accepted. This runs with asset application, outside audio callbacks.
+        cJSON* care_theme = cJSON_GetObjectItem(root.get(), "care_graphic_theme_v1");
+        if (cJSON_IsString(care_theme) && (std::strcmp(care_theme->valuestring, "dark") == 0 ||
+                                           std::strcmp(care_theme->valuestring, "light") == 0)) {
+            auto selected_theme = theme_manager.GetTheme(care_theme->valuestring);
+            if (selected_theme != nullptr) {
+                current_theme = selected_theme;
+            }
+        }
         if (current_theme != nullptr) {
             display->SetTheme(current_theme);
         }

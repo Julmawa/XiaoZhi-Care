@@ -2,9 +2,13 @@
 param(
     [string]$BuildDir = '',
     [string]$CareVersion = '0.3.2-alpha',
-    [string]$Milestone = 'release',
-    [string]$SupportedBoardSku = 'bread-compact-wifi',
-    [string[]]$BaseXiaoZhiVersions = @('2.5.0')
+    [string]$Milestone = 'DP-045-experimental',
+    [string]$SupportedBoardSku = 'bread-compact-wifi-lcd',
+    [string[]]$BaseXiaoZhiVersions = @('2.5.0'),
+    [bool]$EnableGraphics = $true,
+    [string]$Python = 'python',
+    [string]$OutputRoot = '',
+    [switch]$ValidateOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -12,12 +16,13 @@ $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = (Resolve-Path (Join-Path $Root '..\..')).Path
 
 if ([string]::IsNullOrWhiteSpace($BuildDir)) {
-    $BuildDir = Join-Path $RepoRoot 'build\default'
+    $BuildDir = Join-Path $RepoRoot 'build'
 }
 
 $RuntimeDir = Join-Path $Root 'runtime'
 $DocsDir = Join-Path $Root 'docs'
 $OutRoot = Join-Path $Root 'SALIDA'
+if (-not [string]::IsNullOrWhiteSpace($OutputRoot)) { $OutRoot = [IO.Path]::GetFullPath($OutputRoot) }
 function Write-Ok([string]$Text) { Write-Host ('[OK]    ' + $Text) -ForegroundColor Green }
 function Write-Warn([string]$Text) { Write-Host ('[AVISO] ' + $Text) -ForegroundColor Yellow }
 function Fail([string]$Text, [int]$Code = 2) { Write-Host ('[ERROR] ' + $Text) -ForegroundColor Red; exit $Code }
@@ -99,6 +104,12 @@ if($parseErrors -and $parseErrors.Count -gt 0){
     Fail ('i18n.ps1 contiene un error de sintaxis: ' + $detail) 19
 }
 Write-Ok 'Archivo multidioma i18n.ps1 validado.'
+foreach ($scriptPath in @((Join-Path $RuntimeDir 'installer.ps1'), (Join-Path $RuntimeDir 'graphics.ps1'))) {
+    if (-not (Test-Path -LiteralPath $scriptPath)) { Fail ('Falta ' + $scriptPath) 18 }
+    $parseErrors = $null
+    [System.Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$parseTokens, [ref]$parseErrors) | Out-Null
+    if (@($parseErrors).Count -gt 0) { Fail ('Error de sintaxis en ' + $scriptPath) 19 }
+}
 
 Get-ChildItem -LiteralPath $RuntimeDir -Filter '*.bat' -File | ForEach-Object {
     [byte[]]$batBytes = [IO.File]::ReadAllBytes($_.FullName)
@@ -131,10 +142,28 @@ $careLayout =
 if(-not $careLayout){Fail 'La partition-table.bin no coincide con el layout validado de XiaoZhi Care.' 17}
 Write-Ok 'Tabla XiaoZhi Care validada.'
 
-$stamp=Get-Date -Format 'yyyyMMdd-HHmmss'
-$FolderName='XiaoZhi_Care_' + $CareVersion + '_Installer_' + $SupportedBoardSku
+if ($EnableGraphics) {
+    if ($SupportedBoardSku -ne 'bread-compact-wifi-lcd') { Fail 'DP-045 requiere bread-compact-wifi-lcd.' 21 }
+    if (-not (Contains-ExactAsciiZ $app.Bytes 'care_graphic_theme_v1')) { Fail 'Recompilar: el firmware no incluye soporte de tema DP-045.' 22 }
+    $buildConfig = Join-Path $BuildDir 'config\sdkconfig.json'
+    if (-not (Test-Path -LiteralPath $buildConfig)) { Fail 'Falta configuracion del build para verificar pantalla.' 23 }
+    $config = Get-Content -LiteralPath $buildConfig -Raw | ConvertFrom-Json
+    if ($config.IDF_TARGET -ne 'esp32s3' -or $config.ESPTOOLPY_FLASHSIZE -ne '16MB' -or
+        -not $config.SPIRAM_MODE_OCT -or -not $config.LV_FONT_FMT_TXT_LARGE -or -not $config.BOARD_TYPE_BREAD_COMPACT_WIFI_LCD -or
+        (-not $config.LCD_ST7789_240X240 -and -not $config.LCD_ST7789_240X240_7PIN)) {
+        Fail 'El build no corresponde a ESP32-S3 ST7789 240x240.' 23
+    }
+    $pinsPath = Join-Path $Root 'v2\graphic_sources.json'
+    $pins = Get-Content -LiteralPath $pinsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ((Sha (Join-Path $RepoRoot 'assets.bin')) -cne $pins.source_sha256) { Fail 'El origen grafico cambio; revisar antes de empaquetar.' 24 }
+}
+if ($ValidateOnly) { Write-Ok 'Prevalidacion sin generar ZIP ni acceder al dispositivo.'; exit 0 }
+
+$stamp=Get-Date -Format 'yyyyMMdd-HHmmss-fff'
+if ($CareVersion -notmatch '^[A-Za-z0-9._-]+$' -or $SupportedBoardSku -notmatch '^[A-Za-z0-9_-]+$') { Fail 'Nombre de version o perfil invalido.' 25 }
+$FolderName='XiaoZhi_Care_' + $CareVersion + '_Installer_' + $SupportedBoardSku + '_' + $stamp
 $OutDir=Join-Path $OutRoot $FolderName
-if(Test-Path $OutDir){Remove-Item -Recurse -Force $OutDir}
+if(Test-Path -LiteralPath $OutDir){Fail 'La salida ya existe. Se conserva sin sobrescribir.' 26}
 New-Item -ItemType Directory -Path $OutDir | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $OutDir 'firmware') | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $OutDir 'tools') | Out-Null
@@ -143,7 +172,14 @@ New-Item -ItemType Directory -Path (Join-Path $OutDir 'backup') | Out-Null
 Copy-Item -LiteralPath (Join-Path $RuntimeDir 'INSTALAR_XIAOZHI_CARE.bat') -Destination $OutDir
 Copy-Item -LiteralPath (Join-Path $RuntimeDir 'installer.ps1') -Destination $OutDir
 Copy-Item -LiteralPath (Join-Path $RuntimeDir 'i18n.ps1') -Destination $OutDir
+Copy-Item -LiteralPath (Join-Path $RuntimeDir 'graphics.ps1') -Destination $OutDir
+Copy-Item -LiteralPath (Join-Path $RuntimeDir 'PREVISUALIZAR_GRAFICOS.bat') -Destination $OutDir
+Copy-Item -LiteralPath (Join-Path $Root 'LEEME_DP045_INTEGRACION.md') -Destination $OutDir
 foreach($k in $files.Keys){Copy-Item -LiteralPath $files[$k] -Destination (Join-Path $OutDir ('firmware\'+$k))}
+if ($EnableGraphics) {
+    & $Python (Join-Path $Root 'v2\graphic_assets.py') --base $files['generated_assets.bin'] --graphics (Join-Path $RepoRoot 'assets.bin') --app $files['xiaozhi.bin'] --pins $pinsPath --output (Join-Path $OutDir 'graphics')
+    if ($LASTEXITCODE -ne 0) { Fail 'No se generaron recursos graficos completos; no se crea ZIP.' 27 }
+}
 if(Test-Path (Join-Path $DocsDir 'INSTRUCCIONES_USUARIO.txt')){Copy-Item (Join-Path $DocsDir 'INSTRUCCIONES_USUARIO.txt') $OutDir}
 if(Test-Path (Join-Path $DocsDir 'Guia_Instalacion_XiaoZhi_Care_V1.docx')){Copy-Item (Join-Path $DocsDir 'Guia_Instalacion_XiaoZhi_Care_V1.docx') $OutDir}
 
@@ -170,15 +206,26 @@ $release=[ordered]@{
     firmware=$fw
 }
 $release | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $OutDir 'release.json') -Encoding UTF8
+if ($EnableGraphics) {
+    $release.graphics = [ordered]@{catalog='graphics/graphics.json'; sha256=Sha (Join-Path $OutDir 'graphics\graphics.json')}
+    . (Join-Path $RuntimeDir 'graphics.ps1')
+    Test-CareGraphicsPackage $OutDir ([pscustomobject]$release) | Out-Null
+    $release | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $OutDir 'release.json') -Encoding UTF8
+}
 
 $hashLines=@()
 Get-ChildItem (Join-Path $OutDir 'firmware') -File | Sort-Object Name | ForEach-Object {
     $hashLines += ((Sha $_.FullName) + '  firmware/' + $_.Name)
 }
 $hashLines | Set-Content -LiteralPath (Join-Path $OutDir 'SHA256SUMS.txt') -Encoding ASCII
+if ($EnableGraphics) {
+    Get-ChildItem -LiteralPath (Join-Path $OutDir 'graphics') -File | Sort-Object Name | ForEach-Object {
+        ((Sha $_.FullName) + '  graphics/' + $_.Name) | Add-Content -LiteralPath (Join-Path $OutDir 'SHA256SUMS.txt') -Encoding ASCII
+    }
+}
 
 $zip=Join-Path $OutRoot ($FolderName + '.zip')
-if(Test-Path $zip){Remove-Item -Force $zip}
+if(Test-Path -LiteralPath $zip){Fail 'El ZIP ya existe. Se conserva sin sobrescribir.' 26}
 Compress-Archive -Path (Join-Path $OutDir '*') -DestinationPath $zip -CompressionLevel Optimal
 
 Write-Host ''

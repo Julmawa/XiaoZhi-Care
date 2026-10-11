@@ -1,6 +1,9 @@
 ﻿[CmdletBinding()]
 param(
-    [string]$DetectedCulture = ''
+    [string]$DetectedCulture = '',
+    [string]$GraphicProfileId = '',
+    [string]$GraphicSelectionPath = '',
+    [switch]$PreviewGraphics
 )
 
 $ErrorActionPreference = 'Stop'
@@ -13,7 +16,9 @@ $ReleasePath = Join-Path $Root 'release.json'
 $I18nPath = Join-Path $Root 'i18n.ps1'
 if (-not (Test-Path -LiteralPath $I18nPath)) { Write-Host '[ERROR] i18n.ps1 missing.' -ForegroundColor Red; exit 3 }
 . $I18nPath
-Select-XzLanguage $DetectedCulture
+if (-not $PreviewGraphics) { Select-XzLanguage $DetectedCulture }
+$GraphicsPath = Join-Path $Root 'graphics.ps1'
+if (Test-Path -LiteralPath $GraphicsPath) { . $GraphicsPath }
 
 $EsptoolVersion = '5.3.1'
 $EsptoolZipUrl = 'https://github.com/espressif/esptool/releases/download/v5.3.1/esptool-v5.3.1-windows-amd64.zip'
@@ -368,6 +373,19 @@ function Write-InstallLog([string]$BackupDir, [string]$Text) {
 # ---------------------------------------------------------------------------
 # Inicio
 # ---------------------------------------------------------------------------
+if ($PreviewGraphics) {
+    try {
+        $Release = Get-Content -LiteralPath $ReleasePath -Raw -Encoding UTF8 | ConvertFrom-Json
+        Verify-ReleaseFiles $Release
+        if (-not $Release.graphics -or -not (Test-Path -LiteralPath $GraphicsPath)) { throw 'Paquete sin DP-045.' }
+        $catalog = Test-CareGraphicsPackage $Root $Release
+        $GraphicProfileId = Get-CareRequestedProfile $GraphicSelectionPath $GraphicProfileId
+        $selected = Select-CareGraphicsProfile $catalog $GraphicProfileId -NonInteractive
+        [ordered]@{ profile=$selected.profile_id; sha256=$selected.sha256; srmodels_sha256=$selected.srmodels_sha256;
+                    bytes=$selected.size; hardware_tested=$catalog.hardware_tested; flash_performed=$false } | ConvertTo-Json
+        exit 0
+    } catch { Stop-Safe $_.Exception.Message 41 }
+}
 Clear-Host
 Write-Title (T 'installer_title')
 Write-Host (T 'assisted_install')
@@ -394,6 +412,19 @@ Write-Host ((T 'care_version') -f $Release.care_version)
 Write-Host ((T 'base_version') -f ($Release.base_xiaozhi_versions -join ', '))
 Write-Host ((T 'profile') -f $Release.supported_board_sku)
 Verify-ReleaseFiles $Release
+
+$SelectedGraphics = $null
+if ($Release.graphics) {
+    try {
+        if (-not (Test-Path -LiteralPath $GraphicsPath)) { throw 'Falta graphics.ps1.' }
+        $GraphicsCatalog = Test-CareGraphicsPackage $Root $Release
+        $GraphicProfileId = Get-CareRequestedProfile $GraphicSelectionPath $GraphicProfileId
+        $SelectedGraphics = Select-CareGraphicsProfile $GraphicsCatalog $GraphicProfileId
+        Write-Ok ('DP-045: ' + $SelectedGraphics.profile_id)
+    } catch { Stop-Safe $_.Exception.Message 41 }
+} elseif (-not [string]::IsNullOrWhiteSpace($GraphicProfileId) -or -not [string]::IsNullOrWhiteSpace($GraphicSelectionPath)) {
+    Stop-Safe 'Este paquete no contiene perfiles graficos DP-045.' 41
+}
 
 $script:Esptool = Ensure-Esptool
 Write-Ok ((T 'esptool_ready') -f $EsptoolVersion)
@@ -549,6 +580,12 @@ Write-Host (T 'install_new_areas')
 Write-Host ''
 if (-not (Confirm-Yes (T 'confirm_install'))) { Write-Warn (T 'install_cancelled'); exit 0 }
 
+# Recheck after user interaction and backup, before the first erase/write.
+if ($null -ne $SelectedGraphics) {
+    try { Verify-ReleaseFiles $Release; Test-CareGraphicsPackage $Root $Release | Out-Null }
+    catch { Stop-Safe $_.Exception.Message 41 }
+}
+
 # Desde aqui hay escritura en Flash.
 Write-InstallLog $BackupDir 'Comienza escritura de XiaoZhi Care.'
 
@@ -569,6 +606,11 @@ try {
     $ota = Join-Path $FirmwareDir 'ota_data_initial.bin'
     $app = Join-Path $FirmwareDir 'xiaozhi.bin'
     $assets = Join-Path $FirmwareDir 'generated_assets.bin'
+    if ($null -ne $SelectedGraphics) {
+        $assets = Join-Path (Join-Path $Root 'graphics') $SelectedGraphics.file
+        Write-InstallLog $BackupDir ('DP-045: ' + $SelectedGraphics.profile_id + ' SHA256=' + $SelectedGraphics.sha256)
+        $SelectedGraphics | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $BackupDir 'seleccion-grafica.json') -Encoding UTF8
+    }
 
     Write-Host (T 'flashing_care')
     Write-Host (T 'flashing_progress') -ForegroundColor Cyan
