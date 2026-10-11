@@ -20,9 +20,9 @@ if (-not $PreviewGraphics) { Select-XzLanguage $DetectedCulture }
 $GraphicsPath = Join-Path $Root 'graphics.ps1'
 if (Test-Path -LiteralPath $GraphicsPath) { . $GraphicsPath }
 
-$EsptoolVersion = '5.3.1'
-$EsptoolZipUrl = 'https://github.com/espressif/esptool/releases/download/v5.3.1/esptool-v5.3.1-windows-amd64.zip'
-$EsptoolZipSha256 = '2b4a73c45db27426685896f64ce3e557f63a64f43cc100cb65c0cc3486af96d3'
+$EsptoolVersion = '5.4.0'
+$EsptoolZipUrl = 'https://github.com/espressif/esptool/releases/download/v5.4.0/esptool-v5.4.0-windows-amd64.zip'
+$EsptoolZipSha256 = 'b7f6b9dd301a210b31f4829118c909c84aae23107f9ca1fdc14ccf4d7384be2e'
 
 function Write-Title([string]$Text) {
     Write-Host ''
@@ -280,7 +280,8 @@ function Invoke-EsptoolVisible([string[]]$Arguments, [string]$LogPath = '', [swi
 }
 function Ensure-Esptool {
     New-Item -ItemType Directory -Force -Path $ToolsDir | Out-Null
-    $existing = Get-ChildItem -Path $ToolsDir -Filter 'esptool.exe' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+    $versionDir = Join-Path $ToolsDir ('esptool-v' + $EsptoolVersion)
+    $existing = Get-ChildItem -Path $versionDir -Filter 'esptool.exe' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -ne $existing) {
         Write-Ok ((T 'flasher_found') -f $existing.FullName)
         return $existing.FullName
@@ -434,7 +435,7 @@ $Port = Select-ComPort
 Write-Host ((T 'connecting') -f $Port)
 
 try {
-    $chip = Invoke-Esptool -Arguments @('--port', $Port, 'chip-id')
+    $chip = Invoke-Esptool -Arguments @('--port', $Port, 'flash-id')
 } catch {
     Stop-Safe ((T 'connect_fail') -f $Port) 50
 }
@@ -454,7 +455,7 @@ if ($flash.Text -notmatch '(?i)Detected\s+flash\s+size:\s*16\s*MB|flash\s+size[^
 }
 Write-Ok (T 'flash_detected')
 
-$sec = Invoke-Esptool -Arguments @('--port', $Port, '--no-stub', 'get_security_info') -AllowFailure
+$sec = Invoke-Esptool -Arguments @('--port', $Port, '--no-stub', 'get-security-info') -AllowFailure
 if ($sec.ExitCode -ne 0) { Stop-Safe (T 'security_query_fail') 54 }
 if ($sec.Text -notmatch '(?i)Secure\s*Boot:\s*Disabled' -or
     $sec.Text -notmatch '(?i)Flash\s*Encryption:\s*Disabled') {
