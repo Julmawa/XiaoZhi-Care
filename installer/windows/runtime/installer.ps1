@@ -283,16 +283,105 @@ function Ensure-Esptool {
     $versionDir = Join-Path $ToolsDir ('esptool-v' + $EsptoolVersion)
     $existing = Get-ChildItem -Path $versionDir -Filter 'esptool.exe' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -ne $existing) {
+        $hashExe = Get-Sha256 $existing.FullName
+        $hashEsperadoExe = '074e4bca8a6282e48356a24321b0f7d674d73a79aba91b2f5f015f988a8df2fb'
+
+        if ($hashExe -ne $hashEsperadoExe) {
+            Stop-Safe 'La integridad del esptool existente no es valida.' 13
+        }
+
         Write-Ok ((T 'flasher_found') -f $existing.FullName)
         return $existing.FullName
     }
 
     Write-Host (T 'flasher_download') -ForegroundColor Cyan
     $zip = Join-Path $ToolsDir ('esptool-v' + $EsptoolVersion + '-windows-amd64.zip')
+    $temporal = $zip + '.part'
+    $http = $null
+    $respuesta = $null
+    $flujo = $null
+    $archivoSalida = $null
+
     try {
-        Invoke-WebRequest -UseBasicParsing -Uri $EsptoolZipUrl -OutFile $zip
+        Add-Type -AssemblyName System.Net.Http
+
+        if (Test-Path -LiteralPath $temporal) {
+            Remove-Item -LiteralPath $temporal -Force
+        }
+
+        $http = New-Object System.Net.Http.HttpClient
+        $http.Timeout = [TimeSpan]::FromMinutes(15)
+
+        $respuesta = $http.GetAsync(
+            $EsptoolZipUrl,
+            [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead
+        ).GetAwaiter().GetResult()
+
+        $respuesta.EnsureSuccessStatusCode() | Out-Null
+
+        $total = $respuesta.Content.Headers.ContentLength
+        $flujo = $respuesta.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+        $archivoSalida = [System.IO.File]::Create($temporal)
+
+        [byte[]]$buffer = New-Object byte[] 65536
+        [long]$recibidos = 0
+        $ultimoPorcentaje = -1
+        $ultimoTramo = -1
+
+        while (($leidos = $flujo.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            $archivoSalida.Write($buffer, 0, $leidos)
+            $recibidos += $leidos
+
+            $mb = [Math]::Round($recibidos / 1MB, 1)
+
+            if ($total -and $total -gt 0) {
+                $porcentaje = [int][Math]::Floor(
+                    100.0 * $recibidos / $total
+                )
+
+                if ($porcentaje -ne $ultimoPorcentaje) {
+                    Write-Progress -Activity "Descargando esptool" `
+                        -Status "$porcentaje% - $mb MB" `
+                        -PercentComplete $porcentaje
+
+                    $ultimoPorcentaje = $porcentaje
+                    $tramo = [int][Math]::Floor($porcentaje / 10)
+                    if ($tramo -gt $ultimoTramo -or $porcentaje -eq 100) {
+                        $mbTotal = [Math]::Round($total / 1MB, 1)
+                        Write-Host ("Descarga: {0}% - {1} de {2} MB" -f $porcentaje, $mb, $mbTotal) -ForegroundColor Cyan
+                        $ultimoTramo = $tramo
+                    }
+                }
+            } else {
+                Write-Progress -Activity "Descargando esptool" `
+                    -Status "$mb MB descargados"
+            }
+        }
+
+        $archivoSalida.Flush()
+        $archivoSalida.Dispose()
+        $archivoSalida = $null
+
+        if ($total -and $total -gt 0 -and $recibidos -ne $total) {
+            throw "Descarga incompleta: $recibidos de $total bytes."
+        }
+
+        Move-Item -LiteralPath $temporal -Destination $zip -Force
     } catch {
-        Stop-Safe ((T 'flasher_download_fail') -f $_.Exception.Message) 10
+        $detalle = $_.Exception.Message
+        if ($archivoSalida) {
+            $archivoSalida.Dispose()
+            $archivoSalida = $null
+        }
+        if (Test-Path -LiteralPath $temporal) {
+            Remove-Item -LiteralPath $temporal -Force -ErrorAction SilentlyContinue
+        }
+        Stop-Safe ((T 'flasher_download_fail') -f $detalle) 10
+    } finally {
+        Write-Progress -Activity "Descargando esptool" -Completed
+        if ($flujo) { $flujo.Dispose() }
+        if ($respuesta) { $respuesta.Dispose() }
+        if ($http) { $http.Dispose() }
     }
     $got = Get-Sha256 $zip
     if ($got -ne $EsptoolZipSha256) {
