@@ -11,7 +11,11 @@ $ProgressPreference = 'SilentlyContinue'
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $FirmwareDir = Join-Path $Root 'firmware'
 $ToolsDir = Join-Path $Root 'tools'
-$BackupRoot = Join-Path $Root 'backup'
+$LocalData = [Environment]::GetFolderPath('LocalApplicationData')
+if ([string]::IsNullOrWhiteSpace($LocalData)) {
+    throw 'No se pudo determinar la carpeta local de respaldos.'
+}
+$BackupRoot = Join-Path $LocalData 'XiaoZhi Care\Respaldos'
 $ReleasePath = Join-Path $Root 'release.json'
 $I18nPath = Join-Path $Root 'i18n.ps1'
 if (-not (Test-Path -LiteralPath $I18nPath)) { Write-Host '[ERROR] i18n.ps1 missing.' -ForegroundColor Red; exit 3 }
@@ -563,6 +567,12 @@ if (-not (Confirm-Yes (T 'hardware_worked'))) {
 }
 
 Write-Title (T 'title_backup')
+$UnidadRespaldo = [System.IO.Path]::GetPathRoot($BackupRoot)
+$DiscoRespaldo = [System.IO.DriveInfo]::new($UnidadRespaldo)
+
+if ($DiscoRespaldo.AvailableFreeSpace -lt 100MB) {
+    Stop-Safe 'Espacio insuficiente para crear el respaldo de seguridad.' 56
+}
 New-Item -ItemType Directory -Force -Path $BackupRoot | Out-Null
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $BackupDir = Join-Path $BackupRoot ('antes-xiaozhi-care-' + $stamp)
