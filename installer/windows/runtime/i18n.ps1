@@ -122,6 +122,14 @@ $script:XzText = @{
     check_5 = @{ es='  5. LEDs / recordatorios / radio segun su hardware.'; en='  5. LEDs / reminders / radio according to your hardware.'; pt='  5. LEDs / lembretes / radio conforme seu hardware.' }
     no_dev_tools = @{ es='No necesita Visual Studio, VS Code, ESP-IDF ni Python para usar este instalador.'; en='You do not need Visual Studio, VS Code, ESP-IDF or Python to use this installer.'; pt='Voce nao precisa de Visual Studio, VS Code, ESP-IDF nem Python para usar este instalador.' }
 
+    d45_verify_title = @{ es='XIAOZHI CARE - VERIFICADOR DE RESPALDOS'; en='XIAOZHI CARE - BACKUP VERIFIER'; pt='XIAOZHI CARE - VERIFICADOR DE BACKUPS' }
+    d45_available = @{ es='RESPALDOS DISPONIBLES'; en='AVAILABLE BACKUPS'; pt='BACKUPS DISPONIVEIS' }
+    d45_choose = @{ es='Seleccione el numero del respaldo (ENTER cancela)'; en='Select the backup number (ENTER cancels)'; pt='Escolha o numero do backup (ENTER cancela)' }
+    d45_cancelled = @{ es='Verificacion cancelada por el usuario.'; en='Verification cancelled by the user.'; pt='Verificacao cancelada pelo usuario.' }
+    d45_invalid = @{ es='Seleccion invalida. No se realizo ninguna operacion.'; en='Invalid selection. No operation was performed.'; pt='Selecao invalida. Nenhuma operacao foi realizada.' }
+    d45_out_of_range = @{ es='Numero fuera de rango. No se realizo ninguna operacion.'; en='Number out of range. No operation was performed.'; pt='Numero fora do intervalo. Nenhuma operacao foi realizada.' }
+    d45_done = @{ es='Verificacion completada. Ninguna grabacion realizada.'; en='Verification completed. Nothing was written to the device.'; pt='Verificacao concluida. Nenhuma gravacao foi realizada.' }
+    d45_local_missing = @{ es='No se pudo identificar la carpeta local de Windows.'; en='Could not identify the local Windows folder.'; pt='Nao foi possivel identificar a pasta local do Windows.' }
     restore_title = @{ es='XIAOZHI CARE - PRUEBA DE RESTAURACION'; en='XIAOZHI CARE - RESTORE TEST'; pt='XIAOZHI CARE - TESTE DE RESTAURACAO' }
     restore_intro = @{ es='Este proceso restaura byte por byte el respaldo de 16 MB creado antes de instalar XiaoZhi Care.'; en='This process restores, byte for byte, the 16 MB backup created before installing XiaoZhi Care.'; pt='Este processo restaura, byte por byte, o backup de 16 MB criado antes de instalar o XiaoZhi Care.' }
     restore_warn_all = @{ es='La restauracion reemplaza TODO el contenido actual de la Flash, incluida la NVS actual.'; en='Restoration replaces ALL current Flash contents, including the current NVS.'; pt='A restauracao substitui TODO o conteudo atual da Flash, incluindo a NVS atual.' }
