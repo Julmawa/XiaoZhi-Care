@@ -1,0 +1,30 @@
+XIAOZHI CARE V2 - DP-045E - INDICADORES DE ACTIVIDAD
+====================================================
+
+Objetivo: al descargar, calcular hashes, descomprimir o comunicar con esptool,
+mostrar puntos que avancen durante las esperas. No son porcentaje: cada punto
+indica que paso al menos un segundo de actividad sin finalizar el trabajo.
+
+Se preserva el progreso real existente de 0..100 % en la descarga del
+instalador y la barra de progreso original de esptool en las grabaciones.
+La comunicacion del restaurador muestra puntos cada segundo y resultado [OK]
+o [ERROR] segun el codigo de salida real. Los registros tecnicos permanecen
+privados y completos donde ya se guardaban.
+
+Escritura fisica: NO autorizada por esta mejora.
+Restauracion: NO probada en hardware. Los bloqueos previos se conservan.
+
+Verificacion offline:
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "installer\windows\tests\PRUEBAS_DP045E_ACTIVIDAD.ps1"
+
+Regresion:
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "installer\windows\tests\PRUEBAS_DP045D.ps1"
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "installer\windows\tests\PRUEBAS_SOLO_RESPALDAR.ps1"
+
+Validacion Windows: 30/30 pruebas automatizadas aprobadas (14 DP-045D,
+4 BackupOnly y 12 DP-045E). Simulacion separada: 18/18 escenarios aprobados.
+Pruebas de DP-045E con ESP32 real: pendientes.
+Restauracion fisica: pendiente y NO autorizada.
+
+Los dos respaldos privados de 16 MB quedan fuera del paquete y de Git.
+El instalador sigue en estado experimental: no publicarlo como probado.
