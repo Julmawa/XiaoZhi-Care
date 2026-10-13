@@ -1,6 +1,9 @@
 ﻿# XiaoZhi Care DP-045D - modulo de recuperacion independiente.
 # Solo declara funciones. No ejecuta comandos ni accede al dispositivo al cargarse.
 Set-StrictMode -Version 2.0
+if (-not (Get-Command Get-XzFileHash -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'activity.ps1')
+}
 $script:Dp45FlashSize = 16777216
 $script:Dp45EsptoolVersion = '5.4.0'
 $script:Dp45EsptoolZipSha = 'b7f6b9dd301a210b31f4829118c909c84aae23107f9ca1fdc14ccf4d7384be2e'
@@ -8,7 +11,7 @@ $script:Dp45EsptoolExeSha = '074e4bca8a6282e48356a24321b0f7d674d73a79aba91b2f5f0
 $script:Dp45EsptoolUrl = 'https://github.com/espressif/esptool/releases/download/v5.4.0/esptool-v5.4.0-windows-amd64.zip'
 
 function Get-Dp45Hash([string]$Path) {
-    return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToUpperInvariant()
+    return (Get-XzFileHash $Path (T 'activity_sha'))
 }
 
 function Assert-Dp45PlainPath([string]$Path) {
@@ -178,7 +181,7 @@ function Get-Dp45Esptool([string]$RuntimeRoot) {
     } else {
         $part = $zip + '.partial-' + [guid]::NewGuid().ToString('N')
         try {
-            Invoke-WebRequest -Uri $script:Dp45EsptoolUrl -OutFile $part -UseBasicParsing -ErrorAction Stop | Out-Null
+            Receive-XzFileWithActivity $script:Dp45EsptoolUrl $part (T 'activity_download')
             if ((Get-Dp45Hash $part) -cne $script:Dp45EsptoolZipSha.ToUpperInvariant()) { throw (T 'd45r_esptool_hash') }
             Move-Item -LiteralPath $part -Destination $zip
         } finally {
@@ -187,7 +190,7 @@ function Get-Dp45Esptool([string]$RuntimeRoot) {
     }
     $tempDir = $dir + '.partial-' + [guid]::NewGuid().ToString('N')
     try {
-        Expand-Archive -LiteralPath $zip -DestinationPath $tempDir
+        Expand-XzArchiveWithActivity $zip $tempDir (T 'activity_extract')
         $found = @(Get-ChildItem -LiteralPath $tempDir -Filter 'esptool.exe' -File -Recurse)
         if ($found.Count -ne 1 -or (Get-Dp45Hash $found[0].FullName) -cne $script:Dp45EsptoolExeSha.ToUpperInvariant()) {
             throw (T 'd45r_esptool_hash')
@@ -201,15 +204,7 @@ function Get-Dp45Esptool([string]$RuntimeRoot) {
 }
 
 function Invoke-Dp45Tool([string]$Exe, [string[]]$Arguments, [string]$Log = '') {
-    $result = New-Object 'System.Collections.Generic.List[string]'
-    & $Exe @Arguments 2>&1 | ForEach-Object {
-        $line = $_.ToString()
-        [void]$result.Add($line)
-        # Se guarda salida tecnica en carpeta privada, sin mostrar MAC innecesariamente.
-    }
-    $rc = $LASTEXITCODE
-    if ($Log) { [IO.File]::WriteAllLines($Log,$result.ToArray(),[Text.Encoding]::UTF8) }
-    return [pscustomobject]@{Code=$rc; Text=($result.ToArray() -join "`n")}
+    return (Invoke-XzProcessActivity $Exe $Arguments (T 'activity_esptool') $Log)
 }
 
 function Get-Dp45Mac([string]$Output) {

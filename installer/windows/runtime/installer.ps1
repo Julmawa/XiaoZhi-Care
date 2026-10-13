@@ -20,6 +20,9 @@ $ReleasePath = Join-Path $Root 'release.json'
 $I18nPath = Join-Path $Root 'i18n.ps1'
 if (-not (Test-Path -LiteralPath $I18nPath)) { Write-Host '[ERROR] i18n.ps1 missing.' -ForegroundColor Red; exit 3 }
 . $I18nPath
+$ActivityPath = Join-Path $Root 'activity.ps1'
+if (-not (Test-Path -LiteralPath $ActivityPath)) { throw 'Falta activity.ps1.' }
+. $ActivityPath
 if (-not $PreviewGraphics) { Select-XzLanguage $DetectedCulture }
 $GraphicsPath = Join-Path $Root 'graphics.ps1'
 if (Test-Path -LiteralPath $GraphicsPath) { . $GraphicsPath }
@@ -48,7 +51,7 @@ function Stop-Safe([string]$Message, [int]$Code = 2) {
 }
 
 function Get-Sha256([string]$Path) {
-    return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
+    return (Get-XzFileHash $Path (T 'activity_sha')).ToLowerInvariant()
 }
 
 function Get-NullTerminatedAscii([byte[]]$Bytes, [int]$Offset, [int]$Length) {
@@ -188,14 +191,12 @@ function Get-LayoutKind([object[]]$Items) {
 }
 
 function Invoke-Esptool([string[]]$Arguments, [switch]$AllowFailure) {
-    $lines = & $script:Esptool @Arguments 2>&1
-    $code = $LASTEXITCODE
-    $text = ($lines | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
-    if ($code -ne 0 -and -not $AllowFailure) {
-        Write-Host $text
-        throw ((T 'esptool_code') -f $code)
+    $r = Invoke-XzProcessActivity $script:Esptool $Arguments (T 'activity_esptool')
+    if ($r.Code -ne 0 -and -not $AllowFailure) {
+        Write-Host $r.Text -ForegroundColor DarkGray
+        throw ((T 'esptool_code') -f $r.Code)
     }
-    return [pscustomobject]@{ ExitCode = $code; Text = $text }
+    return [pscustomobject]@{ ExitCode=$r.Code; Text=$r.Text }
 }
 
 function Invoke-EsptoolVisible([string[]]$Arguments, [string]$LogPath = '', [switch]$AllowFailure) {
@@ -209,6 +210,8 @@ function Invoke-EsptoolVisible([string[]]$Arguments, [string]$LogPath = '', [swi
     $lastProgressKey = ''
     $ansiPattern = ([char]27) + '\[[0-?]*[ -/]*[@-~]'
     $progressPattern = '(?i)(Reading from|Writing at).*?([0-9]+(?:[.,][0-9]+)?)%'
+    $activity = Start-XzActivity (T 'activity_esptool')
+    $activityOk = $false
 
     if ($LogPath) {
         $parent = Split-Path -Parent $LogPath
@@ -226,6 +229,7 @@ function Invoke-EsptoolVisible([string[]]$Arguments, [string]$LogPath = '', [swi
         & $script:Esptool @Arguments 2>&1 | ForEach-Object {
             $line = $_.ToString()
             [void]$captured.Add($line)
+            Update-XzActivity $activity
 
             if ($LogPath) { Add-Content -LiteralPath $LogPath -Value $line -Encoding UTF8 }
 
@@ -268,8 +272,10 @@ function Invoke-EsptoolVisible([string[]]$Arguments, [string]$LogPath = '', [swi
             }
         }
         $code = $LASTEXITCODE
+        $activityOk = ($code -eq 0)
     }
     finally {
+        Stop-XzActivity $activity $activityOk
         if ($progressActive) {
             Write-Progress -Id 77 -Activity $progressActivity -Completed
         }
@@ -316,10 +322,13 @@ function Ensure-Esptool {
         $http = New-Object System.Net.Http.HttpClient
         $http.Timeout = [TimeSpan]::FromMinutes(15)
 
-        $respuesta = $http.GetAsync(
+        $downloadState = Start-XzActivity (T 'activity_download')
+        $downloadOk = $false
+        $request = $http.GetAsync(
             $EsptoolZipUrl,
             [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead
-        ).GetAwaiter().GetResult()
+        )
+        $respuesta = Wait-XzTask $request $downloadState
 
         $respuesta.EnsureSuccessStatusCode() | Out-Null
 
@@ -332,7 +341,11 @@ function Ensure-Esptool {
         $ultimoPorcentaje = -1
         $ultimoTramo = -1
 
-        while (($leidos = $flujo.Read($buffer, 0, $buffer.Length)) -gt 0) {
+        while ($true) {
+            $readTask = $flujo.ReadAsync($buffer, 0, $buffer.Length)
+            $leidos = Wait-XzTask $readTask $downloadState
+            if ($leidos -eq 0) { break }
+            Update-XzActivity $downloadState
             $archivoSalida.Write($buffer, 0, $leidos)
             $recibidos += $leidos
 
@@ -371,6 +384,7 @@ function Ensure-Esptool {
         }
 
         Move-Item -LiteralPath $temporal -Destination $zip -Force
+        $downloadOk = $true
     } catch {
         $detalle = $_.Exception.Message
         if ($archivoSalida) {
@@ -382,6 +396,7 @@ function Ensure-Esptool {
         }
         Stop-Safe ((T 'flasher_download_fail') -f $detalle) 10
     } finally {
+        if ($downloadState) { Stop-XzActivity $downloadState $downloadOk }
         Write-Progress -Activity "Descargando esptool" -Completed
         if ($flujo) { $flujo.Dispose() }
         if ($respuesta) { $respuesta.Dispose() }
@@ -396,7 +411,7 @@ function Ensure-Esptool {
 
     $dest = Join-Path $ToolsDir ('esptool-v' + $EsptoolVersion)
     if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
-    Expand-Archive -LiteralPath $zip -DestinationPath $dest -Force
+    Expand-XzArchiveWithActivity $zip $dest (T 'activity_extract')
     $exe = Get-ChildItem -Path $dest -Filter 'esptool.exe' -File -Recurse | Select-Object -First 1
     if ($null -eq $exe) { Stop-Safe (T 'flasher_exe_missing') 12 }
     return $exe.FullName

@@ -17,6 +17,9 @@ function Get-CareRequestedProfile([string]$SelectionPath, [string]$ProfileId) {
 }
 
 function Get-CareHash([string]$Path) {
+    if (Get-Command Get-XzFileHash -ErrorAction SilentlyContinue) {
+        return (Get-XzFileHash $Path (T 'activity_sha')).ToLowerInvariant()
+    }
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 

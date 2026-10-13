@@ -20,13 +20,14 @@ if ([string]::IsNullOrWhiteSpace($BuildDir)) {
 }
 
 $RuntimeDir = Join-Path $Root 'runtime'
+. (Join-Path $RuntimeDir 'activity.ps1')
 $DocsDir = Join-Path $Root 'docs'
 $OutRoot = Join-Path $Root 'SALIDA'
 if (-not [string]::IsNullOrWhiteSpace($OutputRoot)) { $OutRoot = [IO.Path]::GetFullPath($OutputRoot) }
 function Write-Ok([string]$Text) { Write-Host ('[OK]    ' + $Text) -ForegroundColor Green }
 function Write-Warn([string]$Text) { Write-Host ('[AVISO] ' + $Text) -ForegroundColor Yellow }
 function Fail([string]$Text, [int]$Code = 2) { Write-Host ('[ERROR] ' + $Text) -ForegroundColor Red; exit $Code }
-function Sha([string]$Path) { return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant() }
+function Sha([string]$Path) { return (Get-XzFileHash $Path 'Comprobando SHA-256').ToLowerInvariant() }
 function Read-U32LE([byte[]]$Bytes, [int]$Offset) { return [BitConverter]::ToUInt32($Bytes, $Offset) }
 function AsciiZ([byte[]]$Bytes, [int]$Offset, [int]$Length) {
     $end = $Offset; $lim = [Math]::Min($Bytes.Length, $Offset + $Length)
@@ -180,10 +181,13 @@ Copy-Item -LiteralPath (Join-Path $RuntimeDir 'graphics.ps1') -Destination $OutD
 Copy-Item -LiteralPath (Join-Path $RuntimeDir 'PREVISUALIZAR_GRAFICOS.bat') -Destination $OutDir
 Copy-Item -LiteralPath (Join-Path $RuntimeDir 'restaurar.ps1') -Destination $OutDir
 Copy-Item -LiteralPath (Join-Path $RuntimeDir 'restore-core.ps1') -Destination $OutDir
+Copy-Item -LiteralPath (Join-Path $RuntimeDir 'activity.ps1') -Destination $OutDir
 Copy-Item -LiteralPath (Join-Path $RuntimeDir 'VERIFICAR_RESPALDOS.bat') -Destination $OutDir
 Copy-Item -LiteralPath (Join-Path $DocsDir 'GUIA_DP045D.txt') -Destination $OutDir
 Copy-Item -LiteralPath (Join-Path $Root 'LEEME_DP045_INTEGRACION.md') -Destination $OutDir
-foreach($k in $files.Keys){Copy-Item -LiteralPath $files[$k] -Destination (Join-Path $OutDir ('firmware\'+$k))}
+foreach($k in $files.Keys){
+    Copy-XzFileWithActivity $files[$k] (Join-Path $OutDir ('firmware\'+$k)) ('Copiando firmware: ' + $k)
+}
 if ($EnableGraphics) {
     & $Python (Join-Path $Root 'v2\graphic_assets.py') --base $files['generated_assets.bin'] --graphics (Join-Path $RepoRoot 'assets.bin') --app $files['xiaozhi.bin'] --pins $pinsPath --output (Join-Path $OutDir 'graphics')
     if ($LASTEXITCODE -ne 0) { Fail 'No se generaron recursos graficos completos; no se crea ZIP.' 27 }
@@ -234,7 +238,7 @@ if ($EnableGraphics) {
 
 $zip=Join-Path $OutRoot ($FolderName + '.zip')
 if(Test-Path -LiteralPath $zip){Fail 'El ZIP ya existe. Se conserva sin sobrescribir.' 26}
-Compress-Archive -Path (Join-Path $OutDir '*') -DestinationPath $zip -CompressionLevel Optimal
+Compress-XzDirectoryWithActivity $OutDir $zip 'Comprimiendo instalador'
 
 Write-Host ''
 Write-Host '====================================================================' -ForegroundColor DarkCyan

@@ -14,6 +14,10 @@ $script:XzText = @{
     progress_reading = @{ es='Leyendo memoria Flash'; en='Reading Flash memory'; pt='Lendo memoria Flash' }
     progress_writing = @{ es='Grabando memoria Flash'; en='Writing Flash memory'; pt='Gravando memoria Flash' }
     progress_done = @{ es='{0}% completado'; en='{0}% complete'; pt='{0}% concluido' }
+    activity_sha = @{ es='Calculando SHA-256'; en='Calculating SHA-256'; pt='Calculando SHA-256' }
+    activity_esptool = @{ es='Comunicando con la ESP32'; en='Communicating with ESP32'; pt='Comunicando com a ESP32' }
+    activity_download = @{ es='Descargando archivo'; en='Downloading file'; pt='Baixando arquivo' }
+    activity_extract = @{ es='Extrayendo archivos'; en='Extracting files'; pt='Extraindo arquivos' }
     esptool_code = @{ es='esptool termino con codigo {0}'; en='esptool exited with code {0}'; pt='esptool terminou com codigo {0}' }
 
     installer_title = @{ es='XIAOZHI CARE - INSTALADOR V2 - DP-045'; en='XIAOZHI CARE - INSTALLER V2 - DP-045'; pt='XIAOZHI CARE - INSTALADOR V2 - DP-045' }
