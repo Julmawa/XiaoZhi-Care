@@ -104,7 +104,11 @@ if($parseErrors -and $parseErrors.Count -gt 0){
     Fail ('i18n.ps1 contiene un error de sintaxis: ' + $detail) 19
 }
 Write-Ok 'Archivo multidioma i18n.ps1 validado.'
-foreach ($scriptPath in @((Join-Path $RuntimeDir 'installer.ps1'), (Join-Path $RuntimeDir 'graphics.ps1'))) {
+foreach ($scriptPath in @(
+    (Join-Path $RuntimeDir 'installer.ps1'),
+    (Join-Path $RuntimeDir 'graphics.ps1'),
+    (Join-Path $RuntimeDir 'restaurar.ps1'),
+    (Join-Path $RuntimeDir 'restore-core.ps1'))) {
     if (-not (Test-Path -LiteralPath $scriptPath)) { Fail ('Falta ' + $scriptPath) 18 }
     $parseErrors = $null
     [System.Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$parseTokens, [ref]$parseErrors) | Out-Null
@@ -174,6 +178,10 @@ Copy-Item -LiteralPath (Join-Path $RuntimeDir 'installer.ps1') -Destination $Out
 Copy-Item -LiteralPath (Join-Path $RuntimeDir 'i18n.ps1') -Destination $OutDir
 Copy-Item -LiteralPath (Join-Path $RuntimeDir 'graphics.ps1') -Destination $OutDir
 Copy-Item -LiteralPath (Join-Path $RuntimeDir 'PREVISUALIZAR_GRAFICOS.bat') -Destination $OutDir
+Copy-Item -LiteralPath (Join-Path $RuntimeDir 'restaurar.ps1') -Destination $OutDir
+Copy-Item -LiteralPath (Join-Path $RuntimeDir 'restore-core.ps1') -Destination $OutDir
+Copy-Item -LiteralPath (Join-Path $RuntimeDir 'VERIFICAR_RESPALDOS.bat') -Destination $OutDir
+Copy-Item -LiteralPath (Join-Path $DocsDir 'GUIA_DP045D.txt') -Destination $OutDir
 Copy-Item -LiteralPath (Join-Path $Root 'LEEME_DP045_INTEGRACION.md') -Destination $OutDir
 foreach($k in $files.Keys){Copy-Item -LiteralPath $files[$k] -Destination (Join-Path $OutDir ('firmware\'+$k))}
 if ($EnableGraphics) {

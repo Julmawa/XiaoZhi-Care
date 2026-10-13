@@ -1,0 +1,50 @@
+﻿XIAOZHI CARE - DP-045D - RECUPERACION ASISTIDA (EXPERIMENTAL)
+==================================================================
+
+ALCANCE Y PRECAUCIONES
+- Compatible SOLO con ESP32-S3 N16R8 y respaldos de 16 MB creados por el instalador.
+- La restauracion completa SOBRESCRIBE tambien NVS, Wi-Fi y los datos Care actuales.
+- El respaldo puede incluir credenciales Wi-Fi y datos personales. NUNCA compartirlo.
+- No es una version validada para uso publico; NO se probó aun una restauracion real.
+- El restaurador es independiente de installer.ps1 y no requiere firmware .bin.
+- NO borrar el respaldo original ni la copia previa a la restauracion.
+
+PRUEBAS EN ORDEN (ANTES DE UNA RESTAURACION REAL)
+1. En el codigo fuente, ejecutar tests/EJECUTAR_PRUEBAS_DP045D.bat.
+   Estas pruebas crean respaldos ficticios en TEMP, no tocan COM ni esptool.
+2. Ejecutar VERIFICAR_RESPALDOS.bat desde la carpeta extraida del instalador.
+   Solo verifica archivos. No conecta a la ESP32.
+3. Para verificar la placa experimental SIN ESCRIBIR Flash (opcional), abrir
+   PowerShell en la carpeta del instalador y ejecutar:
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\restaurar.ps1" -Mode Preflight
+   Este diagnostico usa esptool, puede resetear la placa, pero no graba la Flash.
+
+SOLO RESPALDAR - PRUEBA SEGURA EN HARDWARE REAL
+- Permite comprobar la lectura completa de 16 MB SIN escribir Flash.
+- Ejecutar SOLO tras aprobar el diagnostico Preflight en la placa experimental:
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\restaurar.ps1" -Mode BackupOnly -DetectedCulture es-AR
+- Escribir RESPALDAR si reconoce el dispositivo. ENTER cancela sin respaldo.
+- Se crea una NUEVA carpeta antes-restauracion-care-... en LocalAppData\XiaoZhi Care\Respaldos.
+- Verificar 16 MB y SHA-256. Conservar privados el nuevo respaldo, el original y los logs.
+- Puede reiniciar la placa; NO se ejecutan erase-flash ni write-flash.
+- El modo Restore permanece SIN AUTORIZACION para esta etapa.
+
+RESTAURACION REAL (BLOQUEADA PARA LAS PRIMERAS PRUEBAS)
+- NO ejecutar en una placa con datos importantes hasta aprobar tests offline,
+  diagnostico y revisar con la persona responsable del hardware.
+- El modo Restore requiere tambien -EnableFlashWrite, respaldo adicional completo,
+  controles de chip/seguridad/MAC, confirmacion RESPALDAR y confirmacion final
+  RESTAURAR <MAC>. No lo habilita ningun BAT incluido en el ZIP publico.
+- Un respaldo historico sin MAC no prueba identidad; requiere autorizacion
+  especial -AllowUnboundBackup y confirmacion extra LEGADO <MAC>.
+- Si una escritura falla, NO reintentar a ciegas: conservar respaldos y logs.
+- Una restauracion completada debe tener 16 MB releidos cuyo SHA-256 coincida.
+- Ningun resultado garantiza por si solo audio, Wi-Fi o pantalla: revisar al arrancar.
+
+INTEGRACION CON EL PREPARADOR
+preparar_paquete.ps1 copia solo restaurar.ps1, restore-core.ps1,
+VERIFICAR_RESPALDOS.bat y esta guia. No copia ningun respaldo, BIN privado ni test.
+
+ESTADO
+Pruebas offline aprobadas, diagnostico y respaldo real de 16 MB verificados. Restauracion fisica real PENDIENTE.
+Conservar hardware_tested=false y NO publicar como recuperador validado.
