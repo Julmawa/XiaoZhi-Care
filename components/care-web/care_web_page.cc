@@ -408,6 +408,93 @@ button,input,textarea,select{font:inherit}button{cursor:pointer}.shell{max-width
 .haTechToggle{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:800;color:#405273}
 .haTechToggle input{width:17px;height:17px;accent-color:var(--blue)}
 
+
+/* DP047_PANEL_UNIDO_SIN_AVISOS - ajuste exclusivamente visual */
+/* Ocultar tres avisos informativos amarillos del inicio y Sistema.
+   No afecta las alertas de CARE, ni los mensajes de error o confirmacion. */
+.shell > .notice,
+#section-maintenance > .notice,
+#section-maintenance .systemAudioNotice {
+  display: none !important;
+}
+
+/* Navegacion con grupos unidos, sin separaciones exteriores. */
+#appView > .tabs.careNav {
+  gap: 0 !important;
+  margin-bottom: 0 !important;
+}
+#appView > .tabs.careNav > .careNavGroup {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+/* Sistema: dos columnas independientes, pero con tarjetas pegadas. */
+#section-maintenance .systemOrderedGrid {
+  gap: 0 !important;
+  margin-top: 0 !important;
+}
+#section-maintenance .systemOrderedGrid > .systemStackColumn {
+  gap: 0 !important;
+}
+#section-maintenance .systemOrderedGrid .card {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  margin: 0 !important;
+}
+
+/* Otras secciones: unir tarjetas del mismo nivel, sin tocar
+   los espacios internos de formularios, botones ni campos. */
+#appView .section > .grid {
+  gap: 0 !important;
+}
+#appView .section > .grid > .card,
+#appView .section > .card {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+#appView .section > .card[style*="margin-top"] {
+  margin-top: 0 !important;
+}
+/* FIN DP047_PANEL_UNIDO_SIN_AVISOS */
+
+/* DP047B_COLUMNAS_INDEPENDIENTES_CSS
+   Las tarjetas de cada lado se apilan sin depender de la altura del otro. */
+#section-maintenance .systemOrderedGrid {
+  display:grid !important;
+  grid-template-columns:minmax(0,.82fr) minmax(0,1.18fr) !important;
+  gap:0 !important;
+  align-items:start !important;
+  margin-top:0 !important;
+}
+#section-maintenance .systemOrderedGrid > .systemStackColumn {
+  display:flex !important;
+  flex-direction:column !important;
+  align-items:stretch !important;
+  justify-content:flex-start !important;
+  gap:0 !important;
+  min-width:0 !important;
+}
+#section-maintenance .systemOrderedGrid > .systemStackColumn > .card {
+  margin:0 !important;
+  border-radius:0 !important;
+  box-shadow:none !important;
+  min-width:0 !important;
+}
+#section-maintenance .systemOrderedGrid > .systemUsageCompact {
+  grid-column:1/-1 !important;
+  margin:0 !important;
+}
+@media(max-width:900px) {
+  #section-maintenance .systemOrderedGrid {
+    grid-template-columns:minmax(0,1fr) !important;
+  }
+  #section-maintenance .systemOrderedGrid > .systemStackColumn {
+    display:flex !important;
+  }
+  #section-maintenance .systemOrderedGrid > .systemUsageCompact {
+    grid-column:1 !important;
+  }
+}
 </style>
 </head>
 <body>
@@ -3194,28 +3281,82 @@ function downloadJsonFile(filename,obj){
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 
+// DP046_RADIOS_BACKUP_V2 - emisoras y orden, compatible con backups V1.
+function dp046RadioPayload(raw){
+  if(!raw||typeof raw!=='object'||Array.isArray(raw))throw new Error('Radios: bloque inválido.');
+  if(!Array.isArray(raw.items)||raw.items.length<1||raw.items.length>10)
+    throw new Error('Radios: debe haber entre 1 y 10 emisoras.');
+  const encoder=new TextEncoder();
+  const items=raw.items.map((s,i)=>{
+    if(!s||typeof s!=='object'||Array.isArray(s)||typeof s.name!=='string'||typeof s.url!=='string')
+      throw new Error('Radios: emisora '+(i+1)+' inválida.');
+    if(!s.name.trim()||encoder.encode(s.name).length>95)
+      throw new Error('Radios: nombre inválido en emisora '+(i+1)+'.');
+    const ulen=encoder.encode(s.url).length;
+    if(ulen<8||ulen>511||!/^https?:\/\//.test(s.url))
+      throw new Error('Radios: URL inválida en emisora '+(i+1)+'.');
+    return {name:s.name,url:s.url};
+  });
+  const idx=raw.default_index;
+  if(!Number.isInteger(idx)||idx<0||idx>=items.length)
+    throw new Error('Radios: emisora predeterminada inválida.');
+  return {items:items,default_index:idx};
+}
+
+async function dp046ApplyRadio(payload){
+  const target=dp046RadioPayload(payload);
+  const current=dp046RadioPayload((await api('/api/maintenance/radio-stations')).data);
+  const common=Math.min(current.items.length,target.items.length);
+  for(let i=0;i<common;i++){
+    const old=current.items[i],s=target.items[i];
+    if(old.name!==s.name||old.url!==s.url)
+      await api('/api/maintenance/radio-stations',{
+        method:'PUT',body:{op:'save',index:i,name:s.name,url:s.url},csrfRequired:true
+      });
+  }
+  for(let i=common;i<target.items.length;i++){
+    const s=target.items[i];
+    await api('/api/maintenance/radio-stations',{
+      method:'PUT',body:{op:'save',index:-1,name:s.name,url:s.url},csrfRequired:true
+    });
+  }
+  for(let i=current.items.length-1;i>=target.items.length;i--){
+    await api('/api/maintenance/radio-stations',{
+      method:'PUT',body:{op:'delete',index:i},csrfRequired:true
+    });
+  }
+  await api('/api/maintenance/radio-stations',{
+    method:'PUT',body:{op:'default',index:target.default_index},csrfRequired:true
+  });
+  const checked=dp046RadioPayload((await api('/api/maintenance/radio-stations')).data);
+  if(JSON.stringify(checked)!==JSON.stringify(target))
+    throw new Error('La lista de radios no coincide tras restaurar.');
+}
+
 async function downloadFullBackup(){
   const st=$('fullBackupStatus');
-  if(st)st.textContent='Preparando backup completo...';
+  if(st)st.textContent='Preparando backup completo (incluye radios)...';
   try{
-    const [profileRes,peopleRes,preferencesRes,familyRes,remindersRes,routinesRes,pillboxRes]=await Promise.all([
+    const [profileRes,peopleRes,preferencesRes,familyRes,remindersRes,routinesRes,pillboxRes,radioRes]=await Promise.all([
       api('/api/profile'),
       api('/api/people'),
       api('/api/preferences'),
       api('/api/family'),
       api('/api/reminders'),
       api('/api/routines'),
-      api('/api/pillbox')
+      api('/api/pillbox'),
+      api('/api/maintenance/radio-stations')
     ]);
+    const radio=dp046RadioPayload(radioRes.data);
     const now=new Date();
     const stamp=now.toISOString().replace(/[:.]/g,'-');
     const backup={
       schema:'xiaozhi-care-backup',
-      version:1,
+      version:2,
       created_at:now.toISOString(),
       app:'XiaoZhi Care',
       source:'web-panel',
-      includes:['profile','people','preferences','family','reminders','routines','legacy_pillbox'],
+      includes:['profile','people','preferences','family','reminders','routines','legacy_pillbox','radio_stations'],
       data:{
         profile:profileRes.data||{},
         people:peopleRes.data||[],
@@ -3223,24 +3364,25 @@ async function downloadFullBackup(){
         family:familyRes.data||[],
         reminders:remindersRes.data||[],
         routines:routinesRes.data||[],
-        legacy_pillbox:pillboxRes.data||[]
+        legacy_pillbox:pillboxRes.data||[],
+        radio_stations:radio
       }
     };
     downloadJsonFile('xiaozhi-care-backup-'+stamp+'.json',backup);
-    if(st)st.textContent='Backup completo descargado correctamente.';
-    showMsg('Backup completo descargado');
+    if(st)st.textContent='Backup completo V2 descargado, incluidas '+radio.items.length+' emisoras.';
+    showMsg('Backup completo V2 descargado con radios');
   }catch(e){
     if(st)st.textContent='No se pudo descargar el backup: '+readableError(e.message);
     showMsg('No se pudo descargar el backup: '+readableError(e.message),'error');
   }
 }
-
 let selectedFullBackup=null;
 
 function getBackupDataObject(raw){
-  if(!raw||typeof raw!=='object')throw new Error('El archivo no contiene un JSON válido.');
+  if(!raw||typeof raw!=='object'||Array.isArray(raw))throw new Error('El archivo no contiene un JSON válido.');
   if(raw.schema!=='xiaozhi-care-backup')throw new Error('El archivo no parece ser un backup de XiaoZhi Care.');
-  if(!raw.data||typeof raw.data!=='object')throw new Error('El backup no contiene el bloque data.');
+  if(raw.version!==1&&raw.version!==2)throw new Error('Versión de backup no admitida (solo V1 o V2).');
+  if(!raw.data||typeof raw.data!=='object'||Array.isArray(raw.data))throw new Error('El backup no contiene el bloque data.');
   const d=raw.data;
   const required=['profile','people','preferences','family','reminders','routines'];
   for(const k of required){
@@ -3251,9 +3393,16 @@ function getBackupDataObject(raw){
   if(!Array.isArray(d.family))throw new Error('family debe ser una lista.');
   if(!Array.isArray(d.reminders))throw new Error('reminders debe ser una lista.');
   if(!Array.isArray(d.routines))throw new Error('routines debe ser una lista.');
+  if(raw.version===2){
+    if(!Array.isArray(raw.includes)||!raw.includes.includes('radio_stations'))
+      throw new Error('El backup V2 no declara la sección de radios.');
+    d.radio_stations=dp046RadioPayload(d.radio_stations);
+  }else{
+    // Los backups V1 no modifican las radios actualmente guardadas.
+    delete d.radio_stations;
+  }
   return d;
 }
-
 function backupSummaryText(d){
   return 'Backup válido.\n'+
     'Perfil: '+((d.profile&&d.profile.name)?d.profile.name:'sin nombre')+'\n'+
@@ -3262,9 +3411,10 @@ function backupSummaryText(d){
     'Familia / vínculos: '+d.family.length+'\n'+
     'Recordatorios: '+d.reminders.length+'\n'+
     'Rutinas / pastillero / cuidados: '+d.routines.length+'\n'+
+    (d.radio_stations?'Emisoras de radio: '+d.radio_stations.items.length+' (incluye predeterminada).\n':
+      'Radios: no incluidas (se conservarán las actuales).\n')+
     'Audios: no se restauran en esta versión.';
 }
-
 async function readSelectedFullBackup(){
   const input=$('fullBackupFile');
   if(!input||!input.files||!input.files[0])throw new Error('Seleccioná un archivo JSON de backup.');
@@ -3311,12 +3461,29 @@ function mapOwnerId(id,personMap){
 async function restoreFullBackup(){
   const st=$('fullBackupStatus');
   try{
-    const data=selectedFullBackup?selectedFullBackup.data:await readSelectedFullBackup();
+    const data=await readSelectedFullBackup();
 
-    const msg=backupSummaryText(data)+'\n\nEsta acción reemplazará los datos actuales de XiaoZhi Care. No restaura audios. ¿Continuar?';
+    const msg=backupSummaryText(data)+'\n\nEsta acción reemplazará los datos actuales de XiaoZhi Care y, si el backup es V2, sus emisoras. No restaura audios. ¿Continuar?';
     if(!confirm(msg))return;
 
     if(st)st.textContent='Restaurando backup... No cierres esta página.';
+
+    // DP046: se restauran radios ANTES de borrar datos personales.
+    // Si falla una emisora, se intenta volver a la lista original y se aborta.
+    if(data.radio_stations){
+      if(st)st.textContent='Restaurando emisoras de radio...';
+      const radioBefore=dp046RadioPayload((await api('/api/maintenance/radio-stations')).data);
+      try{
+        await dp046ApplyRadio(data.radio_stations);
+      }catch(radioError){
+        try{
+          await dp046ApplyRadio(radioBefore);
+        }catch(rollbackError){
+          throw new Error('Error en radios: '+radioError.message+'. También falló la recuperación de radios anteriores: '+rollbackError.message);
+        }
+        throw new Error('Error en radios; se recuperaron las anteriores: '+radioError.message);
+      }
+    }
 
     const current=await Promise.all([
       api('/api/family'),
@@ -3383,11 +3550,11 @@ async function restoreFullBackup(){
       await api('/api/reminders',{method:'POST',body,csrfRequired:true});
     }
 
-    await Promise.all([loadPeople(),loadProfile(),loadPreferences(),loadRoutines(),loadPillbox(),loadReminders(),loadFamily(),loadMaintenance(),loadRecordings()]);
+    await Promise.all([loadPeople(),loadProfile(),loadPreferences(),loadRoutines(),loadPillbox(),loadReminders(),loadFamily(),loadMaintenance(),loadRecordings(),loadRadioStations()]);
     setupPeopleFamilyUi();
     updatePersonFamilyOptions();
 
-    if(st)st.textContent='Backup restaurado correctamente. Audios no restaurados.';
+    if(st)st.textContent='Backup restaurado correctamente. '+(data.radio_stations?'Radios restauradas. ':'Radios anteriores conservadas. ')+'Audios no restaurados.';
     showMsg('Backup restaurado correctamente');
   }catch(e){
     if(st)st.textContent='Error al restaurar backup: '+readableError(e.message);
@@ -3647,6 +3814,52 @@ document.addEventListener('DOMContentLoaded',()=>{
   loadRadioStations();
 });
 
+
+// DP047B_COLUMNAS_INDEPENDIENTES_JS
+// Reorganiza solamente tarjetas existentes. Conserva nodos, datos,
+// valores de formularios y manejadores de eventos del panel.
+(function () {
+  function asegurarColumnasIndependientes() {
+    const grid = document.querySelector('#section-maintenance .systemOrderedGrid');
+    if (!grid) return;
+
+    const cards = Array.from(grid.querySelectorAll('.card[data-system-order]'))
+      .filter(card => card.closest('.systemOrderedGrid') === grid);
+    const byOrder = new Map(cards.map(card => [Number(card.dataset.systemOrder), card]));
+    const complete = cards.length === 9 && byOrder.size === 9 &&
+      Array.from({length:9}, (_, i) => i + 1).every(i => byOrder.has(i));
+
+    if (!complete) {
+      console.warn('DP-047B: estructura de tarjetas inesperada; no se reorganizo Sistema.');
+      return;
+    }
+
+    // Aunque el codigo anterior las haya colocado por filas, reunimos
+    // 1,3,5,7 en la izquierda y 2,4,6,8 en la derecha.
+    const left = document.createElement('div');
+    left.className = 'systemStackColumn systemStackLeft';
+    const right = document.createElement('div');
+    right.className = 'systemStackColumn systemStackRight';
+
+    for (let i = 1; i <= 8; i++) {
+      (i % 2 ? left : right).appendChild(byOrder.get(i));
+    }
+
+    const oldColumns = Array.from(grid.children)
+      .filter(el => el.classList.contains('systemStackColumn'));
+
+    grid.prepend(right);
+    grid.prepend(left);
+    oldColumns.forEach(col => col.remove());
+    grid.appendChild(byOrder.get(9));
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', asegurarColumnasIndependientes);
+  } else {
+    asegurarColumnasIndependientes();
+  }
+})();
 </script>
 </body>
 </html>)HTML";

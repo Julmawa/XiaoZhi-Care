@@ -125,7 +125,7 @@ constexpr char kSessionCookieName[] = "care_session";
 constexpr uint32_t kSessionTimeoutSeconds = 30U * 60U;
 constexpr uint32_t kLoginLockoutSeconds = 60U;
 constexpr uint32_t kMaxFailedLogins = 5;
-constexpr bool kCareWebAuthEnabled = false;  // Development mode: disables web password/session checks.
+constexpr bool kCareWebAuthEnabled = true;  // Care auth enabled; HTTP is not encrypted.
 
 TickType_t SecondsToTicks(uint32_t seconds) {
     return pdMS_TO_TICKS(seconds * 1000U);

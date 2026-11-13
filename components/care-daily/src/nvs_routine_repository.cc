@@ -183,6 +183,9 @@ std::vector<RoutineId> ParseIndex(const std::string& json) {
     return ids;
 }
 
+/// @brief
+/// @param handle
+/// @return
 std::vector<RoutineId> ReadIndex(nvs_handle_t handle) {
     std::string json;
     if (!ReadString(handle, kIndexKey, &json)) {

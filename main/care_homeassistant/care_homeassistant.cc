@@ -727,6 +727,98 @@ bool CareHomeAssistant::GetAllowedEntityDetails(
 }
 
 // DP-CF-002 — TTS determinista mediante Home Assistant + Piper.
+// DP-CF-007_HELP_TO_HA
+bool CareHomeAssistant::SendHelpRequest(
+    const std::string& person,
+    const std::string& message
+) {
+    std::lock_guard<std::mutex> lock(http_mutex_);
+
+    if (!ready_ || !network_ready_) {
+        ESP_LOGW(TAG, "DP-CF-007: Home Assistant no esta listo");
+        return false;
+    }
+
+    auto network = Board::GetInstance().GetNetwork();
+    if (network == nullptr) {
+        ESP_LOGE(TAG, "DP-CF-007: interfaz de red no disponible");
+        return false;
+    }
+
+    if (!http_) {
+        http_ = network->CreateHttp(3);
+        if (!http_) {
+            ESP_LOGE(TAG, "DP-CF-007: no se pudo crear cliente HTTP");
+            return false;
+        }
+    }
+
+    cJSON* root = cJSON_CreateObject();
+    if (root == nullptr) {
+        ESP_LOGE(TAG, "DP-CF-007: no se pudo crear JSON");
+        return false;
+    }
+
+    cJSON_AddStringToObject(root, "person", person.c_str());
+    cJSON_AddStringToObject(root, "type", "help_request");
+    cJSON_AddStringToObject(root, "message", message.c_str());
+    cJSON_AddStringToObject(root, "source", "care_voice");
+
+    char* raw_body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (raw_body == nullptr) {
+        ESP_LOGE(TAG, "DP-CF-007: no se pudo serializar JSON");
+        return false;
+    }
+
+    std::string body(raw_body);
+    cJSON_free(raw_body);
+
+    const std::string url =
+        std::string(CARE_HA_URL) + "/api/events/care_help_request";
+    const std::string authorization =
+        "Bearer " + std::string(CARE_HA_TOKEN);
+
+    http_->SetTimeout(7000);
+    http_->SetHeader("Authorization", authorization);
+    http_->SetHeader("Content-Type", "application/json");
+    http_->SetHeader("Accept", "application/json");
+    http_->SetHeader("Connection", "keep-alive");
+    http_->SetContent(std::move(body));
+
+    ESP_LOGI(TAG, "DP-CF-007: enviando pedido de ayuda a Home Assistant");
+
+    auto opened = http_->Open("POST", url);
+    if (!opened) {
+        ESP_LOGE(TAG,
+                 "DP-CF-007: error conectando con HA: %s",
+                 opened.error().ToString().c_str());
+        return false;
+    }
+
+    auto status = http_->GetStatusCode();
+    if (!status) {
+        ESP_LOGE(TAG, "DP-CF-007: sin HTTP status");
+        return false;
+    }
+
+    const std::string response = http_->ReadAll();
+
+    if (*status < 200 || *status >= 300) {
+        ESP_LOGE(TAG,
+                 "DP-CF-007: Home Assistant HTTP %d: %s",
+                 *status,
+                 response.c_str());
+        return false;
+    }
+
+    ESP_LOGI(TAG,
+             "DP-CF-007: pedido de ayuda aceptado por HA HTTP %d",
+             *status);
+    return true;
+}
+
+
 bool CareHomeAssistant::GetTtsUrl(
     const std::string& message,
     std::string& audio_url

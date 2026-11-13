@@ -1,3 +1,4 @@
+#include "sdkconfig.h"
 #include "application.h"
 #include "care_radio/radio_service.h"
 #include "assets.h"
@@ -22,6 +23,107 @@
 #include <limits>
 
 #define TAG "Application"
+
+
+// DP-CF-007_HELP_TO_HA
+// Matcher V1 deliberadamente conservador: solo frases exactas.
+// Incluye "necesito ayudarme" porque fue una transcripción STT real observada.
+bool IsCareHelpRequestText(const std::string& text) {
+    // DP-CF-007_R3_HELP_NORMALIZATION
+    std::string value;
+    value.reserve(text.size());
+
+    bool previous_space = true;
+
+    auto append_char = [&](char c) {
+        if (c == ' ') {
+            if (!previous_space && !value.empty()) {
+                value.push_back(' ');
+                previous_space = true;
+            }
+            return;
+        }
+
+        value.push_back(c);
+        previous_space = false;
+    };
+
+    for (size_t i = 0; i < text.size();) {
+        const unsigned char c = static_cast<unsigned char>(text[i]);
+
+        if (c < 0x80) {
+            char out = static_cast<char>(c);
+
+            if (out >= 'A' && out <= 'Z') {
+                out = static_cast<char>(out - 'A' + 'a');
+            }
+
+            const bool is_letter_or_digit =
+                (out >= 'a' && out <= 'z') ||
+                (out >= '0' && out <= '9');
+
+            if (is_letter_or_digit) {
+                append_char(out);
+            } else {
+                append_char(' ');
+            }
+
+            ++i;
+            continue;
+        }
+
+        if (c == 0xC3 && i + 1 < text.size()) {
+            const unsigned char n = static_cast<unsigned char>(text[i + 1]);
+            char replacement = 0;
+
+            switch (n) {
+                case 0x81: case 0xA1: replacement = 'a'; break;
+                case 0x89: case 0xA9: replacement = 'e'; break;
+                case 0x8D: case 0xAD: replacement = 'i'; break;
+                case 0x93: case 0xB3: replacement = 'o'; break;
+                case 0x9A: case 0xBA: replacement = 'u'; break;
+                case 0x9C: case 0xBC: replacement = 'u'; break;
+                case 0x91: case 0xB1: replacement = 'n'; break;
+                default: break;
+            }
+
+            if (replacement != 0) {
+                append_char(replacement);
+            } else {
+                append_char(' ');
+            }
+
+            i += 2;
+            continue;
+        }
+
+        append_char(' ');
+        ++i;
+    }
+
+    while (!value.empty() && value.back() == ' ') {
+        value.pop_back();
+    }
+
+    static constexpr const char* kHelpRequests[] = {
+        "necesito ayuda",
+        "necesito ayudarme",
+        "ayudame",
+        "por favor ayudame",
+        "no me siento bien",
+        "me siento mal",
+        "llama a alguien",
+        "por favor llama a alguien",
+    };
+
+    for (const char* candidate : kHelpRequests) {
+        if (value == candidate) {
+            return true;
+        }
+    }
+
+    return false;
+}
 #include "care_homeassistant.h"
 
 // DP039_DIAGNOSTICO_LIMPIO: sólo se retiraron trazas de medición.
@@ -531,6 +633,12 @@ void Application::CheckAssetsVersion() {
     Settings settings("assets", true);
     // Check if there is a new assets need to be downloaded
     std::string download_url = settings.GetString("download_url");
+#if CONFIG_CARE_OTA_PROTECTION
+    if (!download_url.empty()) {
+        ESP_LOGW(TAG, "CARE ASSETS lock: pending download ignored");
+    }
+    download_url.clear();  // Keep local assets; do not alter NVS
+#endif
 
     if (!download_url.empty()) {
         settings.EraseKey("download_url");
@@ -811,6 +919,26 @@ void Application::InitializeProtocol() {
                     glyphs.clear();
                 }
                 ESP_LOGI(TAG, ">> %s", text->valuestring);
+
+                // DP-CF-007_HELP_TO_HA
+                const std::string care_stt_message(text->valuestring);
+                if (IsCareHelpRequestText(care_stt_message)) {
+                    ESP_LOGW(TAG,
+                             "DP-CF-007: help phrase detected: %s",
+                             care_stt_message.c_str());
+
+                    Schedule([message = care_stt_message]() {
+                        const bool sent =
+                            CareHomeAssistant::GetInstance().SendHelpRequest(
+                                "Yoli",
+                                message);
+
+                        ESP_LOGI(TAG,
+                                 "DP-CF-007: help event sent=%d text=%s",
+                                 sent ? 1 : 0,
+                                 message.c_str());
+                    });
+                }
                 Schedule([display, message = std::string(text->valuestring),
                           glyphs = std::move(glyphs), bpp]() {
                     display->AddTextGlyphs(glyphs, bpp);
@@ -1585,6 +1713,12 @@ void Application::Reboot() {
 }
 
 bool Application::UpgradeFirmware(const std::string& url, const std::string& version) {
+#if CONFIG_CARE_OTA_PROTECTION
+    (void)url;
+    (void)version;
+    ESP_LOGW(TAG, "CARE OTA lock: firmware upgrade refused");
+    return false;
+#endif
     auto& board = Board::GetInstance();
     auto display = board.GetDisplay();
 

@@ -74,6 +74,12 @@ public:
         const std::string& action,
         CareHaDeviceControlResult& result);
 
+    // DP-CF-007_HELP_TO_HA
+    bool SendHelpRequest(
+        const std::string& person,
+        const std::string& message
+    );
+
     const char* GetName() const;
 
 private:
