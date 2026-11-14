@@ -50,7 +50,9 @@ bool VoiceRecordingStore::Init() {
     conf.base_path = kBasePath;
     conf.partition_label = kPartitionLabel;
     conf.max_files = 16;
-    conf.format_if_mount_failed = true;
+    // DP-TG-045: preserve existing voice data if SPIFFS cannot mount.
+    // Never format silently during experimental firmware installation.
+    conf.format_if_mount_failed = false;
     esp_err_t err = esp_vfs_spiffs_register(&conf);
     if (err == ESP_ERR_INVALID_STATE) {
         ESP_LOGW(kTag, "Voice SPIFFS already mounted");
