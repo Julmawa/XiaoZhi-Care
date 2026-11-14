@@ -1,5 +1,13 @@
 #include "care_homeassistant.h"
+
+// DP-TG-025A: credenciales HA opcionales para la rama experimental.
+// Sin el archivo privado el firmware compila y HA permanece sin conexion.
+#if __has_include("care_homeassistant_secrets.h")
 #include "care_homeassistant_secrets.h"
+#else
+#define CARE_HA_URL ""
+#define CARE_HA_TOKEN ""
+#endif
 
 #include "board.h"
 #include "cJSON.h"
@@ -249,6 +257,14 @@ bool CareHomeAssistant::IsNetworkReady() const {
 }
 
 void CareHomeAssistant::OnNetworkConnected() {
+    // No enviar solicitudes HA si no hay URL/token configurados.
+    if (std::string(CARE_HA_URL).empty() ||
+        std::string(CARE_HA_TOKEN).empty()) {
+        network_ready_ = false;
+        ESP_LOGI(TAG, "DP-TG-025A: Home Assistant desactivado (sin credenciales)");
+        return;
+    }
+
     network_ready_ = true;
 
     ESP_LOGI(
