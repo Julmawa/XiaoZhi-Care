@@ -35,7 +35,7 @@ public:
 
     bool Play();
     // DP-CF-003 - reproduce un MP3/AAC corto una sola vez.
-    bool PlayOneShotUrl(const std::string& url);
+    bool PlayOneShotUrl(const std::string& url, bool allow_redirects = true);
     // DP043B_RADIO_AAC_VOICE
     bool PlayStation(const std::string& selector);
     bool NextStation();
@@ -84,7 +84,7 @@ private:
 
     void WorkerTask();
     void PlaybackTask();
-    bool StreamOnce(const std::string& url, uint32_t generation);
+    bool StreamOnce(const std::string& url, uint32_t generation, bool allow_redirects);
 
     // DP042B_RADIO_JITTER_BUFFER
     struct BufferedPcm {
@@ -125,6 +125,8 @@ private:
     // DP-CF-003 - reproducción temporal para mensajes familiares.
     std::string one_shot_url_;
     std::atomic<bool> one_shot_active_{false};
+    // DP-TG-045: strict source policy is opt-in for Telegram, not legacy audio.
+    std::atomic<bool> one_shot_allow_redirects_{true};
     std::atomic<bool> one_shot_resume_radio_{false};
 
     // DP042B_RADIO_JITTER_BUFFER
