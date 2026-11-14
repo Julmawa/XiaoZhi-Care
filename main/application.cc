@@ -237,6 +237,12 @@ void Application::Initialize() {
             return RequestCareFamilyMessageNotification(sender, message);
         });
 
+    // DP-TG-018: interfaz separada, preserva el flujo previo HA/Piper.
+    xiaozhi_care::CareWebServer::GetInstance().SetFamilyAudioCallback(
+        [this](const std::string& url) -> bool {
+            return RequestCareFamilyAudioPlayback(url);
+        });
+
     // DP042A_RADIO_MP3_BASE
     auto& care_radio =
         xiaozhi_care::radio::RadioService::GetInstance();
@@ -1530,6 +1536,40 @@ bool Application::RequestCareFamilyMessageNotification(
     return true;
 }
 
+
+// DP-TG-018 - Solo ensayos manuales con CARE inactivo y radio apagada.
+// Que se acepte una solicitud NO equivale a haber reproducido el MP3.
+bool Application::RequestCareFamilyAudioPlayback(const std::string& audio_url) {
+    auto& radio = xiaozhi_care::radio::RadioService::GetInstance();
+    if (audio_url.empty() || GetDeviceState() != kDeviceStateIdle ||
+        notify_player_.IsBusy() || radio.WantsPlaying() || radio.IsStreaming()) {
+        ESP_LOGW(TAG, "DP-TG-018: CARE ocupado; solicitud rechazada");
+        return false;
+    }
+
+    Schedule([this, audio_url]() {
+        auto& radio = xiaozhi_care::radio::RadioService::GetInstance();
+        // Revalidar: el estado pudo cambiar antes de ejecutar el trabajo.
+        if (GetDeviceState() != kDeviceStateIdle || notify_player_.IsBusy() ||
+            radio.WantsPlaying() || radio.IsStreaming()) {
+            ESP_LOGW(TAG, "DP-TG-018: CARE se ocupo; audio no iniciado");
+            return;
+        }
+        auto* led = Board::GetInstance().GetLed();
+        if (led != nullptr) {
+            led->ShowCareFamilyMessage();
+        }
+        if (!radio.PlayOneShotUrl(audio_url)) {
+            if (led != nullptr) {
+                led->ClearCareFamilyMessage();
+            }
+            ESP_LOGE(TAG, "DP-TG-018: fallo de inicio de MP3");
+            return;
+        }
+        ESP_LOGI(TAG, "DP-TG-018: solicitud MP3 enviada al reproductor");
+    });
+    return true;
+}
 
 bool Application::RequestCareFamilyMessageTrigger() {
     Schedule([this]() {
