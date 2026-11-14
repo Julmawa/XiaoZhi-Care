@@ -74,7 +74,9 @@ bool MountCareDataSpiffs() {
     conf.base_path = kCareDataBasePath;
     conf.partition_label = kCareDataPartitionLabel;
     conf.max_files = 8;
-    conf.format_if_mount_failed = true;
+    // DP-TG-045: preserve existing CARE data if SPIFFS cannot mount.
+    // Never format silently during experimental firmware installation.
+    conf.format_if_mount_failed = false;
 
     esp_err_t err = esp_vfs_spiffs_register(&conf);
     if (err == ESP_ERR_INVALID_STATE) {
