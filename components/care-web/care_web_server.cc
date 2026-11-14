@@ -394,6 +394,29 @@ void SetFamilyCorsHeaders(httpd_req_t* req) {
     httpd_resp_set_hdr(req, "Access-Control-Max-Age", "600");
 }
 
+// DP-TG-018: URL exacta de la PC de laboratorio; evita SSRF desde el panel.
+// Se admiten solo nombres de archivo MP3 simples en la carpeta compartida.
+bool IsCareTelegramLabAudioUrl(const std::string& url) {
+    static const std::string kBase = "http://192.168.0.144:8095/";
+    if (url.size() <= kBase.size() || url.size() > kBase.size() + 96 ||
+        url.compare(0, kBase.size(), kBase) != 0) {
+        return false;
+    }
+    const std::string file = url.substr(kBase.size());
+    if (file.size() < 5 || file.substr(file.size() - 4) != ".mp3" ||
+        file.find("..") != std::string::npos) {
+        return false;
+    }
+    for (char c : file) {
+        const bool safe = (c >= 'a' && c <= 'z') ||
+                          (c >= 'A' && c <= 'Z') ||
+                          (c >= '0' && c <= '9') ||
+                          c == '_' || c == '-' || c == '.';
+        if (!safe) return false;
+    }
+    return true;
+}
+
 esp_err_t HandleFamilyMessageOptions(httpd_req_t* req) {
     SetFamilyCorsHeaders(req);
     httpd_resp_set_status(req, "204 No Content");
@@ -488,6 +511,7 @@ esp_err_t CareWebServer::Start() {
         {"/api/status", HTTP_GET, HandleStatus},
         {"/api/family-message", HTTP_POST, HandleFamilyMessage},
         {"/api/family-message", HTTP_OPTIONS, HandleFamilyMessageOptions},
+        {"/api/family-audio", HTTP_POST, HandleFamilyAudio},
         {"/api/home-assistant/status", HTTP_GET, HandleHomeAssistantStatus},
         {"/api/home-assistant/entities", HTTP_GET, HandleHomeAssistantEntities},
         {"/api/home-assistant/allowed", HTTP_GET, HandleHomeAssistantAllowedGet},
@@ -1609,6 +1633,47 @@ esp_err_t CareWebServer::HandleHomeAssistantNamesPut(httpd_req_t* req) {
     return SendRoot(req, response);
 }
 
+
+// DP-TG-018 - entrada de audio experimental, sin token Telegram.
+void CareWebServer::SetFamilyAudioCallback(
+    std::function<bool(const std::string&)> callback) {
+    family_audio_callback_ = std::move(callback);
+}
+
+esp_err_t CareWebServer::HandleFamilyAudio(httpd_req_t* req) {
+    auto& web = GetInstance();
+    if (!web.Authorize(req, true)) return ESP_OK;
+    if (!web.family_audio_callback_) {
+        return SendNamedError(req, "503 Service Unavailable", "FAMILY_AUDIO_UNAVAILABLE");
+    }
+
+    std::string body;
+    if (ReadBody(req, body) != ESP_OK) {
+        return SendNamedError(req, "400 Bad Request", "INVALID_BODY");
+    }
+    cJSON* root = cJSON_ParseWithLength(body.data(), body.size());
+    if (root == nullptr || !cJSON_IsObject(root)) {
+        if (root) cJSON_Delete(root);
+        return SendNamedError(req, "400 Bad Request", "INVALID_JSON");
+    }
+    cJSON* url_json = cJSON_GetObjectItemCaseSensitive(root, "url");
+    std::string audio_url;
+    if (cJSON_IsString(url_json) && url_json->valuestring != nullptr) {
+        audio_url = url_json->valuestring;
+    }
+    cJSON_Delete(root);
+
+    if (!IsCareTelegramLabAudioUrl(audio_url)) {
+        return SendNamedError(req, "400 Bad Request", "INVALID_AUDIO_URL");
+    }
+    if (!web.family_audio_callback_(audio_url)) {
+        return SendNamedError(req, "409 Conflict", "CARE_BUSY");
+    }
+
+    // "202" solo indica programacion en RAM, no entrega ni reproduccion.
+    return SendJsonText(req, "202 Accepted",
+                        R"({"success":true,"data":{"scheduled":true,"played":false}})");
+}
 
 // DP-CF-001
 esp_err_t CareWebServer::HandleFamilyMessage(httpd_req_t* req) {
