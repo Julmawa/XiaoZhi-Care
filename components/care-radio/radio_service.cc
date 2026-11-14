@@ -507,7 +507,7 @@ void RadioService::SetNetworkActivityCallback(
 
 
 // DP-CF-003 - reproducción corta para TTS/avisos.
-bool RadioService::PlayOneShotUrl(const std::string& url) {
+bool RadioService::PlayOneShotUrl(const std::string& url, bool allow_redirects) {
     if (!initialized_.load() || url.empty()) {
         ESP_LOGW(kTag, "One-shot requested before init or with empty URL");
         return false;
@@ -522,6 +522,7 @@ bool RadioService::PlayOneShotUrl(const std::string& url) {
     }
 
     one_shot_resume_radio_.store(resume_radio);
+    one_shot_allow_redirects_.store(allow_redirects);
     one_shot_active_.store(true);
 
     ClearPcmBuffer();
@@ -1006,7 +1007,8 @@ void RadioService::WorkerTask() {
             continue;
         }
 
-        const bool ok = StreamOnce(url, generation);
+        const bool allow_redirects = !one_shot || one_shot_allow_redirects_.load();
+        const bool ok = StreamOnce(url, generation, allow_redirects);
         streaming_.store(false);
 
         if (generation != stream_generation_.load()) {
@@ -1075,7 +1077,8 @@ void RadioService::WorkerTask() {
 
 
 bool RadioService::StreamOnce(const std::string& url,
-                              uint32_t generation) {
+                              uint32_t generation,
+                              bool allow_redirects) {
     esp_http_client_config_t config = {};
     config.url = url.c_str();
     config.timeout_ms = kHttpTimeoutMs;
@@ -1113,8 +1116,8 @@ bool RadioService::StreamOnce(const std::string& url,
         if (status >= 300 && status < 400) {
             // One-shot audio is restricted to a validated source URL. Never
             // allow an HTTP redirect to escape that source allowlist.
-            if (one_shot_active_.load()) {
-                ESP_LOGW(kTag, "DP-TG-045: one-shot redirect rejected status=%d", status);
+            if (!allow_redirects) {
+                ESP_LOGW(kTag, "DP-TG-045: restricted one-shot redirect rejected status=%d", status);
                 esp_http_client_close(client);
                 esp_http_client_cleanup(client);
                 return false;
