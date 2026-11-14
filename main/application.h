@@ -119,6 +119,8 @@ public:
     bool RequestCareFamilyMessageNotification(
         const std::string& sender,
         const std::string& message);
+    // DP-TG-018 - inicia una prueba de MP3, no confirma escucha.
+    bool RequestCareFamilyAudioPlayback(const std::string& audio_url);
     void RegisterMcpBroadcastCallback(std::function<void(const std::string&)> callback);
     void SetAecMode(AecMode mode);
     AecMode GetAecMode() const { return aec_mode_; }
