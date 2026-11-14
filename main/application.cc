@@ -1559,7 +1559,7 @@ bool Application::RequestCareFamilyAudioPlayback(const std::string& audio_url) {
         if (led != nullptr) {
             led->ShowCareFamilyMessage();
         }
-        if (!radio.PlayOneShotUrl(audio_url)) {
+        if (!radio.PlayOneShotUrl(audio_url, false)) {
             if (led != nullptr) {
                 led->ClearCareFamilyMessage();
             }
