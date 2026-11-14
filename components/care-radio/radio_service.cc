@@ -1081,7 +1081,8 @@ bool RadioService::StreamOnce(const std::string& url,
     config.timeout_ms = kHttpTimeoutMs;
     config.crt_bundle_attach = esp_crt_bundle_attach;
     config.keep_alive_enable = true;
-    config.disable_auto_redirect = false;
+    // DP-TG-045: control redirects explicitly; Telegram one-shot is local-only.
+    config.disable_auto_redirect = true;
     config.max_redirection_count = 4;
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
@@ -1110,6 +1111,14 @@ bool RadioService::StreamOnce(const std::string& url,
         status = esp_http_client_get_status_code(client);
 
         if (status >= 300 && status < 400) {
+            // One-shot audio is restricted to a validated source URL. Never
+            // allow an HTTP redirect to escape that source allowlist.
+            if (one_shot_active_.load()) {
+                ESP_LOGW(kTag, "DP-TG-045: one-shot redirect rejected status=%d", status);
+                esp_http_client_close(client);
+                esp_http_client_cleanup(client);
+                return false;
+            }
             if (redirect >= 4) {
                 ESP_LOGW(kTag, "Radio redirect limit reached status=%d", status);
                 esp_http_client_close(client);
