@@ -1084,8 +1084,8 @@ bool RadioService::StreamOnce(const std::string& url,
     config.timeout_ms = kHttpTimeoutMs;
     config.crt_bundle_attach = esp_crt_bundle_attach;
     config.keep_alive_enable = true;
-    // DP-TG-045: control redirects explicitly; Telegram one-shot is local-only.
-    config.disable_auto_redirect = true;
+    // DP-TG-045: preserve legacy radio behavior, block redirects for Telegram.
+    config.disable_auto_redirect = !allow_redirects;
     config.max_redirection_count = 4;
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
