@@ -68,6 +68,9 @@ public:
     void SetFamilyMessageCallback(
         std::function<bool(const std::string&, const std::string&)> callback);
 
+    // DP-TG-018 - MP3 experimental en red local, sin Home Assistant.
+    void SetFamilyAudioCallback(std::function<bool(const std::string&)> callback);
+
 private:
     CareWebServer() = default;
 
@@ -86,6 +89,7 @@ private:
     static esp_err_t HandleAuthPassword(httpd_req_t* req);
     static esp_err_t HandleStatus(httpd_req_t* req);
     static esp_err_t HandleFamilyMessage(httpd_req_t* req);
+    static esp_err_t HandleFamilyAudio(httpd_req_t* req);
     static esp_err_t HandleHomeAssistantStatus(httpd_req_t* req);
     static esp_err_t HandleHomeAssistantEntities(httpd_req_t* req);
     static esp_err_t HandleHomeAssistantAllowedGet(httpd_req_t* req);
@@ -188,6 +192,7 @@ private:
 
     std::function<bool(const std::string&, const std::string&)>
         family_message_callback_;
+    std::function<bool(const std::string&)> family_audio_callback_;
 
     httpd_handle_t server_ = nullptr;
     mutable std::mutex session_mutex_;
