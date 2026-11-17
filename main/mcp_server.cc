@@ -3,6 +3,7 @@
  * Reference: https://modelcontextprotocol.io/specification/2024-11-05
  */
 
+#include "sdkconfig.h"
 #include "mcp_server.h"
 #include <esp_app_desc.h>
 #include <esp_log.h>
@@ -140,6 +141,7 @@ void McpServer::AddUserOnlyTools() {
                         return true;
                     });
 
+#if !CONFIG_CARE_OTA_PROTECTION
     // Firmware upgrade
     AddUserOnlyTool(
         "self.upgrade_firmware",
@@ -161,6 +163,8 @@ void McpServer::AddUserOnlyTools() {
 
             return true;
         });
+
+#endif  // !CONFIG_CARE_OTA_PROTECTION
 
     // Display control
 #ifdef HAVE_LVGL
@@ -290,8 +294,8 @@ void McpServer::AddUserOnlyTools() {
     }
 #endif  // HAVE_LVGL
 
-    // Assets download url (always registered — Settings storage works regardless of partition
-    // layout)
+#if !CONFIG_CARE_OTA_PROTECTION
+    // Assets download url (unprotected builds only)
     AddUserOnlyTool("self.assets.set_download_url", "Set the download url for the assets",
                     PropertyList({Property("url", kPropertyTypeString)}),
                     [](const PropertyList& properties) -> ReturnValue {
@@ -300,6 +304,7 @@ void McpServer::AddUserOnlyTools() {
                         settings.SetString("download_url", url);
                         return true;
                     });
+#endif  // !CONFIG_CARE_OTA_PROTECTION
 }
 
 void McpServer::AddTool(std::unique_ptr<McpTool> tool) {

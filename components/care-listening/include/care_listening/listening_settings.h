@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <mutex>
 #include <cstdint>
 #include <string>
 
@@ -30,6 +31,7 @@ public:
 
 private:
     ListeningSettings() = default;
+    std::mutex nvs_mutex_;
 
     std::atomic<uint8_t> profile_{static_cast<uint8_t>(ListeningProfile::Medium)};
     std::atomic<bool> initialized_{false};

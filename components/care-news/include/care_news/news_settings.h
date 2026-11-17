@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <mutex>
 #include <cstdint>
 #include <string>
 
@@ -30,6 +31,7 @@ public:
 
 private:
     NewsSettings() = default;
+    std::mutex nvs_mutex_;
 
     std::atomic<uint8_t> category_{static_cast<uint8_t>(NewsCategory::Argentina)};
     std::atomic<uint8_t> headline_count_{3};

@@ -1,3 +1,9 @@
+#include "care_restore.h"
+#include "esp_timer.h"
+#include <algorithm>
+#include <memory>
+#include <set>
+#include <cstring>
 #include "care_vitals/care_vitals_store.h"
 #include "care_web_server.h"
 
@@ -135,7 +141,7 @@ esp_err_t ReadBody(httpd_req_t* req, std::string& body) {
     size_t received = 0;
     while (received < body.size()) {
         int ret = httpd_req_recv(req, body.data() + received, body.size() - received);
-        if (ret == HTTPD_SOCK_ERR_TIMEOUT) continue;
+        if (ret == HTTPD_SOCK_ERR_TIMEOUT) { body.clear(); return ESP_ERR_TIMEOUT; }
         if (ret <= 0) { body.clear(); return ESP_FAIL; }
         received += static_cast<size_t>(ret);
     }
@@ -752,6 +758,12 @@ esp_err_t CareWebServer::HandleProfilePut(httpd_req_t* req) {
     CareError result = CareManager::GetInstance().SaveProfile(profile);
     if (result != CareError::OK) return SendError(req, HttpStatusFor(result), result);
     return SendOne(req, profile, [](const CareProfile& p) { return ProfileToJson(p, true); });
+}
+
+// DP-CF-001
+void CareWebServer::SetFamilyMessageCallback(
+    std::function<bool(const std::string&, const std::string&)> callback) {
+    family_message_callback_ = std::move(callback);
 }
 
 esp_err_t CareWebServer::HandlePreferencesList(httpd_req_t* req) {
@@ -1545,6 +1557,30 @@ void CareWebServer::SetAudioVolumeCallbacks(std::function<int()> getter,
     audio_volume_setter_ = std::move(setter);
 }
 
+
+// DP-HA-009
+void CareWebServer::SetHomeAssistantStatusCallback(
+    std::function<bool(CareWebHomeAssistantStatus&)> callback) {
+    home_assistant_status_callback_ = std::move(callback);
+}
+
+
+// DP-HA-010A - callback para descubrimiento de entidades
+void CareWebServer::SetHomeAssistantEntitiesCallback(
+    std::function<bool(std::vector<CareWebHomeAssistantEntity>&)> callback) {
+    home_assistant_entities_callback_ = std::move(callback);
+}
+
+
+// DP-HA-010B
+void CareWebServer::SetHomeAssistantAllowlistCallbacks(
+    std::function<bool(std::vector<std::string>&)> getter,
+    std::function<bool(const std::vector<std::string>&)> setter) {
+    home_assistant_allowlist_getter_ = std::move(getter);
+    home_assistant_allowlist_setter_ = std::move(setter);
+}
+
+
 esp_err_t CareWebServer::HandleMaintenanceStatus(httpd_req_t* req) {
     if (!GetInstance().Authorize(req, false)) return ESP_OK;
 
@@ -2137,6 +2173,279 @@ esp_err_t CareWebServer::HandleMaintenanceClearLegacyPillbox(httpd_req_t* req) {
     cJSON_AddItemToObject(root, "data", data);
     ESP_LOGI("CARE_WEB", "Maintenance cleared %d legacy pillbox entrie(s)", deleted);
     return SendRoot(req, root);
+}
+
+
+CareError ParseRestorePerson(const std::string&, CarePerson&);
+
+namespace {
+using JsonPtr = std::unique_ptr<cJSON, decltype(&cJSON_Delete)>;
+const cJSON* Field(const cJSON* obj, const char* key) {
+    return cJSON_GetObjectItemCaseSensitive(obj, key);
+}
+bool CleanTree(const cJSON* item, unsigned depth = 0) {
+    if (!item || depth > 12) return false;
+    for (const cJSON* child = item->child; child; child = child->next) {
+        if (cJSON_IsObject(item) && Field(item, child->string) != child) return false;
+        if (!CleanTree(child, depth + 1)) return false;
+    }
+    return true;
+}
+unsigned IdNumber(const std::string& id, const char* prefix) {
+    const size_t size = std::strlen(prefix);
+    if (id.size() != size + 6 || id.compare(0, size, prefix)) return 0;
+    unsigned n = 0;
+    for (size_t i = size; i < id.size(); ++i) {
+        if (id[i] < '0' || id[i] > '9') return 0;
+        n = n * 10 + unsigned(id[i] - '0');
+    }
+    // Four stores list by scanning from 1 to the sequence; bound untrusted IDs.
+    return n <= 10000 ? n : 0;
+}
+template<class T, class Decode>
+bool ReadRows(const cJSON* root, const char* key, size_t limit, const char* prefix,
+              std::vector<T>& rows, Decode decode, uint32_t& sequence) {
+    const auto* array = Field(root, key);
+    if (!cJSON_IsArray(array) || size_t(cJSON_GetArraySize(array)) > limit) return false;
+    std::set<unsigned> seen;
+    const cJSON* row = nullptr;
+    cJSON_ArrayForEach(row, array) {
+        if (!cJSON_IsObject(row)) return false;
+        const std::string id = ReadString(row, "id");
+        const unsigned number = IdNumber(id, prefix);
+        if (!number || !seen.insert(number).second) return false;
+        std::unique_ptr<char, decltype(&cJSON_free)> text(cJSON_PrintUnformatted(row), cJSON_free);
+        if (!text) return false;
+        T record;
+        if (!decode(text.get(), id, record)) return false;
+        rows.push_back(std::move(record));
+        if (sequence < number + 1) sequence = number + 1;
+    }
+    return true;
+}
+esp_err_t RestoreStatus(httpd_req_t* req, const char* status) {
+    restore::Selection target, previous;
+    if (!restore::ReadTarget(target, previous))
+        return SendNamedError(req, "503 Service Unavailable", "RESTORE_SELECTOR_UNAVAILABLE");
+    auto active = restore::Active();
+    char result[220];
+    std::snprintf(result, sizeof(result),
+        "{\"success\":true,\"data\":{\"active\":%u,\"target\":%u,\"active_radio\":%u,"
+        "\"target_radio\":%u,\"pending\":%s,\"can_revert\":%s}}",
+        unsigned(active.data), unsigned(target.data), unsigned(active.radio), unsigned(target.radio),
+        target == active ? "false" : "true", target == previous ? "false" : "true");
+    return SendJsonText(req, status, result);
+}
+}
+
+esp_err_t CareWebServer::HandleRestoreStatus(httpd_req_t* req) {
+    if (!GetInstance().Authorize(req, false)) return ESP_OK;
+    return RestoreStatus(req, "200 OK");
+}
+
+esp_err_t CareWebServer::HandleRestoreRevert(httpd_req_t* req) {
+    if (!GetInstance().Authorize(req, true)) return ESP_OK;
+    if (!restore::Revert()) return SendNamedError(req, "409 Conflict", "RESTORE_REVERT_UNAVAILABLE");
+    return RestoreStatus(req, "202 Accepted");
+}
+
+esp_err_t CareWebServer::HandleRestoreStage(httpd_req_t* req) {
+    if (!GetInstance().Authorize(req, true)) return ESP_OK;
+    restore::Selection target, previous;
+    if (!restore::ReadTarget(target, previous))
+        return SendNamedError(req, "503 Service Unavailable", "RESTORE_SELECTOR_UNAVAILABLE");
+    if (!(target == restore::Active())) return SendNamedError(req, "409 Conflict", "RESTORE_ALREADY_PENDING");
+
+    // Require a complete body and a bounded deadline before touching flash.
+    if (!req->content_len || req->content_len > 65536)
+        return SendNamedError(req, "413 Payload Too Large", "RESTORE_SIZE");
+    std::string body(req->content_len, '\0');
+    const auto deadline = esp_timer_get_time() + 20000000;
+    for (size_t pos = 0; pos < body.size();) {
+        const int n = httpd_req_recv(req, body.data() + pos, body.size() - pos);
+        if (n <= 0 || esp_timer_get_time() > deadline)
+            return SendNamedError(req, "408 Request Timeout", "RESTORE_INCOMPLETE_UPLOAD");
+        pos += static_cast<size_t>(n);
+    }
+    auto invalid = [&](const char* reason) { return SendNamedError(req, "422 Unprocessable Entity", reason); };
+    auto failed = [&](const char* reason) { return SendNamedError(req, "503 Service Unavailable", reason); };
+    // cJSON uses NUL-terminated member values, so reject embedded NUL escapes.
+    if (body.find('\0') != std::string::npos || body.find("\\u0000") != std::string::npos)
+        return invalid("RESTORE_INVALID_JSON");
+    JsonPtr root(cJSON_ParseWithLengthOpts(body.c_str(), body.size()+1, nullptr, true), cJSON_Delete);
+    if (!cJSON_IsObject(root.get()) || !CleanTree(root.get()) ||
+        ReadString(root.get(), "schema") != "xiaozhi-care-backup")
+        return invalid("RESTORE_INVALID_JSON");
+    auto* version = Field(root.get(), "version");
+    const auto* data = Field(root.get(), "data");
+    if (!cJSON_IsNumber(version) || (version->valuedouble != 1 && version->valuedouble != 2) ||
+        !cJSON_IsObject(data)) return invalid("RESTORE_VERSION");
+
+    auto& manager = CareManager::GetInstance();
+    CareStorage storage;
+    if (storage.Init() != CareError::OK) return failed("RESTORE_STORAGE");
+    uint32_t ps, prefs, pb, rs, routines_seq, family_seq;
+    daily::NvsRoutineRepository routines_store;
+    family::NvsFamilyRelationshipRepository family_store;
+    if (storage.GetPersonSequence(ps) != CareError::OK ||
+        storage.GetPreferenceSequence(prefs) != CareError::OK ||
+        storage.GetPillboxSequence(pb) != CareError::OK ||
+        storage.GetReminderSequence(rs) != CareError::OK ||
+        !routines_store.RestoreSequence(routines_seq, false) ||
+        !family_store.RestoreSequence(family_seq, false)) return failed("RESTORE_SEQUENCE");
+    if (std::max({ps, prefs, pb, rs, routines_seq, family_seq}) > 10001)
+        return failed("RESTORE_SEQUENCE_LIMIT");
+
+    std::vector<CarePerson> people;
+    std::vector<CarePreference> preferences;
+    std::vector<CarePillboxEntry> pillbox;
+    std::vector<CareReminder> reminders;
+    std::vector<daily::CareRoutine> routines;
+    std::vector<family::FamilyRelationship> family;
+    std::vector<radio::RadioStation> stations;
+    int radio_default = 0;
+    CareProfile profile;
+    bool has_profile = false;
+    const auto* profile_node = Field(data, "profile");
+    if (!cJSON_IsObject(profile_node) ||
+        (cJSON_IsTrue(Field(profile_node,"configured")) && ReadString(profile_node,"name").empty()))
+        return invalid("RESTORE_PROFILE");
+    if (!ReadString(profile_node, "name").empty()) {
+        std::unique_ptr<char, decltype(&cJSON_free)> json(cJSON_PrintUnformatted(profile_node), cJSON_free);
+        if (!json || ParseProfilePayload(json.get(), profile) != CareError::OK ||
+            manager.ValidateProfile(profile) != CareError::OK) return invalid("RESTORE_PROFILE");
+        has_profile = true;
+    } else {
+        const auto loaded = storage.LoadProfile(profile);
+        if (loaded != CareError::OK && loaded != CareError::NOT_FOUND) return failed("RESTORE_PROFILE_READ");
+        has_profile = loaded == CareError::OK;
+    }
+
+    if (!ReadRows(data,"people",kMaxPeople,"p",people,[&](auto json, const auto& id, auto& row) {
+            row.id = id;
+            return ParseRestorePerson(json,row) == CareError::OK && manager.ValidatePerson(row,true) == CareError::OK;
+        },ps)) return invalid("RESTORE_PEOPLE");
+    std::set<std::string> persons;
+    for (const auto& row : people) persons.insert(row.id);
+    auto person = [&](const std::string& id) { return persons.count(id) != 0; };
+
+    if (!ReadRows(data,"preferences",kMaxPreferences,"pr",preferences,[&](auto json, const auto& id, auto& row) {
+            row.id = id;
+            return ParsePreferencePayload(json,row) == CareError::OK && manager.ValidatePreference(row,true) == CareError::OK &&
+                (row.owner_id == "profile" || person(row.owner_id));
+        },prefs)) return invalid("RESTORE_PREFERENCES_OR_REFERENCES");
+    if (!ReadRows(data,"reminders",kMaxReminders,"r",reminders,[&](auto json, const auto& id, auto& row) {
+            row.id = id;
+            return ParseReminderPayload(json,row) == CareError::OK && manager.ValidateReminder(row,true) == CareError::OK &&
+                (row.related_person_id.empty() || person(row.related_person_id));
+        },rs)) return invalid("RESTORE_REMINDERS_OR_REFERENCES");
+    if (!ReadRows(data,"family",64,"f",family,[&](auto json, const auto& id, auto& row) {
+            row.id.value = id;
+            return ParseFamilyPayload(json,row) == CareError::OK &&
+                person(row.from_person_id) && person(row.to_person_id) &&
+                row.type.size() <= 64 && row.label.size() <= 256 && row.notes.size() <= 1024;
+        },family_seq)) return invalid("RESTORE_FAMILY_OR_REFERENCES");
+    if (!ReadRows(data,"routines",128,"r",routines,[](auto json, const auto& id, auto& row) {
+            row.id = daily::RoutineId(id);
+            if (ParseRoutinePayload(json,row) != CareError::OK || !row.IsValid()) return false;
+            JsonPtr raw(cJSON_Parse(json),cJSON_Delete);
+            if (!raw) return false;
+            // Round-trip fields understood by the existing web parser. A field
+            // present but unknown must not silently become a different schedule.
+            JsonPtr canonical(RoutineToJson(row),cJSON_Delete);
+            if (!canonical) return false;
+            for (const cJSON* field=canonical->child; field; field=field->next) {
+                const auto* entered=Field(raw.get(),field->string);
+                if (entered && !cJSON_Compare(entered,field,true)) return false;
+            }
+            return true;
+        },routines_seq)) return invalid("RESTORE_ROUTINES");
+    if (Field(data,"legacy_pillbox")) {
+        if (!ReadRows(data,"legacy_pillbox",kMaxPillboxEntries,"pb",pillbox,[&](auto json, const auto& id, auto& row) {
+                row.id = id;
+                return ParsePillboxPayload(json,row) == CareError::OK && manager.ValidatePillboxEntry(row,true) == CareError::OK;
+            },pb)) return invalid("RESTORE_PILLBOX");
+    } else {
+        for (uint32_t i = 1; i <= pb; ++i) {
+            char id[16];
+            std::snprintf(id,sizeof(id),"pb%06lu",static_cast<unsigned long>(i));
+            CarePillboxEntry row;
+            const auto err = storage.LoadPillboxEntry(id,row);
+            if (err == CareError::NOT_FOUND) continue;
+            if (err != CareError::OK || pillbox.size() >= kMaxPillboxEntries) return failed("RESTORE_PILLBOX_READ");
+            pillbox.push_back(std::move(row));
+        }
+    }
+    if (version->valueint == 2) {
+        const auto* radio = Field(data,"radio_stations");
+        const auto* items = Field(radio,"items");
+        const auto* index = Field(radio,"default_index");
+        const int count = cJSON_GetArraySize(items);
+        if (!cJSON_IsObject(radio) || !cJSON_IsArray(items) || count < 1 || count > 10 ||
+            !cJSON_IsNumber(index) || index->valuedouble != index->valueint ||
+            index->valueint < 0 || index->valueint >= count) return invalid("RESTORE_RADIOS");
+        radio_default = index->valueint;
+        const cJSON* item = nullptr;
+        cJSON_ArrayForEach(item,items) {
+            auto name = ReadString(item,"name"), url = ReadString(item,"url");
+            if (name.find_first_not_of(" \t\r\n") == std::string::npos || name.size() > 95 ||
+                url.size() < 8 || url.size() > 511 || url.find_first_of(" \t\r\n") != std::string::npos ||
+                (url.compare(0,7,"http://") && url.compare(0,8,"https://"))) return invalid("RESTORE_RADIOS");
+            stations.push_back({std::move(name),std::move(url)});
+        }
+    }
+    auto equal_records = [](cJSON* left, cJSON* right) {
+        JsonPtr a(left,cJSON_Delete), b(right,cJSON_Delete);
+        return a && b && cJSON_Compare(a.get(),b.get(),true);
+    };
+    const auto existing_recordings = voice::VoiceRecordingStore::GetInstance().List();
+    for (const auto& row : reminders) {
+        if (std::any_of(existing_recordings.begin(),existing_recordings.end(),
+                      [&](const auto& audio){ return audio.reminder_id == row.id; })) {
+            CareReminder current;
+            if (storage.LoadReminder(row.id,current) != CareError::OK ||
+                !equal_records(ReminderToJson(current),ReminderToJson(row)))
+                return invalid("RESTORE_RECORDING_ID_CONFLICT");
+        }
+    }
+    daily::NvsRoutineExecutionRepository history;
+    std::set<std::string> historical_ids;
+    for (const auto& entry : history.List()) historical_ids.insert(entry.routine_id.Str());
+    for (const auto& row : routines) {
+        if (!historical_ids.count(row.id.Str())) continue;
+        const auto current = routines_store.FindById(row.id);
+        if (!current || !equal_records(RoutineToJson(*current),RoutineToJson(row)))
+            return invalid("RESTORE_HISTORY_ID_CONFLICT");
+    }
+    root.reset();
+    std::string().swap(body);
+    uint16_t gen;
+    if (!restore::Reserve(gen)) return failed("RESTORE_RESERVE_FAILED");
+    {
+        restore::Scope scope(gen);
+        if (!routines_store.Init() || !family_store.Init() ||
+            storage.SetPersonSequence(ps) != CareError::OK ||
+            storage.SetPreferenceSequence(prefs) != CareError::OK ||
+            storage.SetPillboxSequence(pb) != CareError::OK ||
+            storage.SetReminderSequence(rs) != CareError::OK ||
+            !routines_store.RestoreSequence(routines_seq,true) ||
+            !family_store.RestoreSequence(family_seq,true) ||
+            (has_profile && storage.SaveProfile(profile) != CareError::OK))
+            return failed("RESTORE_STAGE_WRITE_FAILED");
+        for (const auto& row : people) if (storage.SavePerson(row) != CareError::OK) return failed("RESTORE_STAGE_WRITE_FAILED");
+        for (const auto& row : preferences) if (storage.SavePreference(row) != CareError::OK) return failed("RESTORE_STAGE_WRITE_FAILED");
+        for (const auto& row : reminders) if (storage.SaveReminder(row) != CareError::OK) return failed("RESTORE_STAGE_WRITE_FAILED");
+        for (const auto& row : pillbox) if (storage.SavePillboxEntry(row) != CareError::OK) return failed("RESTORE_STAGE_WRITE_FAILED");
+        for (const auto& row : routines) if (!routines_store.Save(row)) return failed("RESTORE_STAGE_WRITE_FAILED");
+        for (const auto& row : family) if (!family_store.Save(row)) return failed("RESTORE_STAGE_WRITE_FAILED");
+        if (routines_store.List().size() != routines.size() || family_store.List().size() != family.size() || !restore::Seal())
+            return failed("RESTORE_STAGE_VERIFY_FAILED");
+    }
+    if (!stations.empty() && !radio::RadioService::StageStations(gen,stations,radio_default))
+        return failed("RESTORE_RADIO_WRITE_FAILED");
+    if (!restore::Publish({gen, stations.empty() ? target.radio : gen}))
+        return failed("RESTORE_CHECK_STATUS_BEFORE_RETRY");
+    return RestoreStatus(req, "202 Accepted");
 }
 
 }  // namespace xiaozhi_care

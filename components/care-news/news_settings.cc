@@ -27,6 +27,7 @@ NewsSettings& NewsSettings::GetInstance() {
 }
 
 bool NewsSettings::Init() {
+    std::lock_guard<std::mutex> lock(nvs_mutex_);
     if (initialized_.load()) {
         return true;
     }
@@ -46,22 +47,30 @@ bool NewsSettings::Init() {
 
     bool needs_commit = false;
 
-    if (category_err == ESP_ERR_NVS_NOT_FOUND || !ValidCategoryRaw(category)) {
+    if (category_err == ESP_ERR_NVS_NOT_FOUND || (category_err == ESP_OK && !ValidCategoryRaw(category))) {
         category = static_cast<uint8_t>(NewsCategory::Argentina);
-        if (nvs_set_u8(handle, kCategoryKey, category) == ESP_OK) {
-            needs_commit = true;
+        const auto write = nvs_set_u8(handle, kCategoryKey,category);
+        if (write != ESP_OK) {
+            nvs_close(handle);
+            ESP_LOGW(kTag,"Unable to persist default news category: %s",esp_err_to_name(write));
+            return false;
         }
+        needs_commit = true;
     } else if (category_err != ESP_OK) {
         nvs_close(handle);
         ESP_LOGW(kTag, "Unable to read news category: %s", esp_err_to_name(category_err));
         return false;
     }
 
-    if (count_err == ESP_ERR_NVS_NOT_FOUND || !ValidCount(count)) {
+    if (count_err == ESP_ERR_NVS_NOT_FOUND || (count_err == ESP_OK && !ValidCount(count))) {
         count = 3;
-        if (nvs_set_u8(handle, kCountKey, count) == ESP_OK) {
-            needs_commit = true;
+        const auto write = nvs_set_u8(handle,kCountKey,count);
+        if (write != ESP_OK) {
+            nvs_close(handle);
+            ESP_LOGW(kTag,"Unable to persist default news headline count: %s",esp_err_to_name(write));
+            return false;
         }
+        needs_commit = true;
     } else if (count_err != ESP_OK) {
         nvs_close(handle);
         ESP_LOGW(kTag, "Unable to read news count: %s", esp_err_to_name(count_err));
@@ -107,6 +116,7 @@ uint8_t NewsSettings::GetHeadlineCount() const {
 }
 
 bool NewsSettings::Set(NewsCategory category, uint8_t headline_count) {
+    std::lock_guard<std::mutex> lock(nvs_mutex_);
     const uint8_t raw_category = static_cast<uint8_t>(category);
     if (!ValidCategoryRaw(raw_category) || !ValidCount(headline_count)) {
         return false;

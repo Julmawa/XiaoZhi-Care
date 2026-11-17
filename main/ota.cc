@@ -1,3 +1,4 @@
+#include "sdkconfig.h"
 #include "ota.h"
 #include "system_info.h"
 #include "settings.h"
@@ -270,6 +271,12 @@ void Ota::MarkCurrentVersionValid() {
 }
 
 bool Ota::Upgrade(const std::string& firmware_url, std::function<void(int progress, size_t speed)> callback) {
+#if CONFIG_CARE_OTA_PROTECTION
+    (void)firmware_url;
+    (void)callback;
+    ESP_LOGW(TAG, "CARE OTA lock: flash write refused");
+    return false;
+#endif
     ESP_LOGI(TAG, "Upgrading firmware from %s", firmware_url.c_str());
     esp_ota_handle_t update_handle = 0;
     auto update_partition = esp_ota_get_next_update_partition(NULL);

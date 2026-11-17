@@ -34,6 +34,11 @@ public:
     void SetNetworkActivityCallback(NetworkActivityCallback callback);
 
     bool Play();
+    // DP-CF-003 - reproduce un MP3/AAC corto una sola vez.
+    using Completion = std::function<void(bool)>;
+    bool PlayOneShotUrl(const std::string& url, bool allow_redirects = true,
+                        Completion on_done = {}, std::function<bool()> admit_first_pcm = {});
+    bool OneShotActive() const { return one_shot_active_.load(); }
     // DP043B_RADIO_AAC_VOICE
     bool PlayStation(const std::string& selector);
     bool NextStation();
@@ -48,6 +53,7 @@ public:
     void SetSystemPaused(bool paused);
 
     // Compatibilidad: reemplaza la emisora predeterminada actual.
+    static bool StageStations(uint16_t generation, const std::vector<RadioStation>& stations, int index);
     bool SetStation(const std::string& name, const std::string& url);
 
     // DP043A_RADIO_STATIONS_WEB
@@ -82,7 +88,7 @@ private:
 
     void WorkerTask();
     void PlaybackTask();
-    bool StreamOnce(const std::string& url, uint32_t generation);
+    bool StreamOnce(const std::string& url, uint32_t generation, bool allow_redirects);
 
     // DP042B_RADIO_JITTER_BUFFER
     struct BufferedPcm {
@@ -90,15 +96,17 @@ private:
         int sample_rate = 0;
         int channels = 0;
         uint32_t duration_ms = 0;
+        uint32_t generation = 0;
     };
 
     bool EnqueuePcm(std::vector<int16_t>&& pcm,
                     int sample_rate,
-                    int channels);
+                    int channels, uint32_t generation);
     void ClearPcmBuffer();
 
     bool LoadSettings();
     bool SaveSettingsLocked();
+    static bool SaveStationSet(const char*, const std::vector<RadioStation>&, int);
 
     mutable std::mutex mutex_;
     std::string station_name_;
@@ -119,6 +127,20 @@ private:
 
     // DP043B_RADIO_AAC_VOICE
     std::atomic<uint32_t> stream_generation_{0};
+
+    // DP-CF-003 - reproducción temporal para mensajes familiares.
+    std::string one_shot_url_;
+    Completion one_shot_completion_;
+    std::function<bool()> one_shot_admission_;
+    std::atomic<bool> one_shot_failed_{false};
+    std::atomic<bool> one_shot_pcm_written_{false};
+    std::atomic<uint32_t> pcm_eof_generation_{0};
+    bool pcm_in_flight_ = false; // pcm_buffer_mutex_
+
+    std::atomic<bool> one_shot_active_{false};
+    // DP-TG-045: strict source policy is opt-in for Telegram, not legacy audio.
+    std::atomic<bool> one_shot_allow_redirects_{true};
+    std::atomic<bool> one_shot_resume_radio_{false};
 
     // DP042B_RADIO_JITTER_BUFFER
     // Productor: HTTP + MP3. Consumidor: salida PCM continua.

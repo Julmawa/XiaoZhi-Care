@@ -10,6 +10,7 @@ namespace xiaozhi_care::family {
 
 class NvsFamilyRelationshipRepository {
 public:
+    bool RestoreSequence(uint32_t& value, bool write);
     bool Init();
     bool IsReady() const { return ready_; }
 

@@ -70,3 +70,20 @@ tools/audio_care/convertidos/
 tools/audio_care/reporte.txt
 tools/*.exe
 tools/audio_care/*.exe
+
+# token de Home Assistant
+main/care_homeassistant/care_homeassistant_secrets.h
+
+# Configure secrets locally, never package them
+care_telegram_private.h
+
+# DP-049 - Proteccion de configuracion privada
+**/care_telegram_private.h
+**/*_private.h
+.env
+.env.*
+*.key
+*.pfx
+*.p12
+/CMakePresets.json.respaldo_DP049
+/DP049_R4_PREPARADO.txt

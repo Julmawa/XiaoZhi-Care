@@ -1,4 +1,5 @@
-﻿#include "care_daily/nvs_routine_repository.h"
+#include "care_restore.h"
+#include "care_daily/nvs_routine_repository.h"
 
 #include <algorithm>
 #include <array>
@@ -183,6 +184,9 @@ std::vector<RoutineId> ParseIndex(const std::string& json) {
     return ids;
 }
 
+/// @brief
+/// @param handle
+/// @return
 std::vector<RoutineId> ReadIndex(nvs_handle_t handle) {
     std::string json;
     if (!ReadString(handle, kIndexKey, &json)) {
@@ -339,10 +343,11 @@ std::optional<CareRoutine> DeserializeRoutine(const std::string& json) {
 std::string RoutineFilePath(const RoutineId& id) {
     char path[96] = {};
     std::snprintf(path, sizeof(path), "%s/daily_routine_%s.json", kCareDataBasePath, id.Str().c_str());
-    return path;
+    return restore::Path(path);
 }
 
 bool SaveTextFile(const char* path, const std::string& text) {
+    if (restore::Staging()) return restore::WriteCandidate(path, text);
     FILE* f = std::fopen(path, "wb");
     if (f == nullptr) return false;
     const size_t written = std::fwrite(text.data(), 1, text.size(), f);
@@ -387,6 +392,7 @@ bool DeleteTextFile(const char* path) {
 }
 
 bool DeleteRoutineNvsKey(const std::string& nvs_namespace, const char* key) {
+    if (restore::Generation()) return true;
     nvs_handle_t handle = 0;
     esp_err_t err = nvs_open(nvs_namespace.c_str(), NVS_READWRITE, &handle);
     if (err != ESP_OK) return false;
@@ -401,21 +407,22 @@ bool DeleteRoutineNvsKey(const std::string& nvs_namespace, const char* key) {
 
 std::vector<RoutineId> ReadRoutineIndexFile() {
     std::string json;
-    if (!LoadTextFile(kRoutineIndexPath, &json, kMaxRoutineIndexSize)) return {};
+    if (!LoadTextFile(restore::Path(kRoutineIndexPath).c_str(), &json, kMaxRoutineIndexSize)) return {};
     return ParseIndex(json);
 }
 
 bool WriteRoutineIndexFile(const std::vector<RoutineId>& ids) {
     const std::string json = SerializeIndex(ids);
-    return !json.empty() && SaveTextFile(kRoutineIndexPath, json);
+    return !json.empty() && SaveTextFile(restore::Path(kRoutineIndexPath).c_str(), json);
 }
 
 std::vector<RoutineId> ReadRoutineIndexMigrating(const std::string& nvs_namespace) {
     std::string json;
-    if (LoadTextFile(kRoutineIndexPath, &json, kMaxRoutineIndexSize)) {
+    if (LoadTextFile(restore::Path(kRoutineIndexPath).c_str(), &json, kMaxRoutineIndexSize)) {
         return ParseIndex(json);
     }
 
+    if (restore::Generation()) return {};
     nvs_handle_t handle = 0;
     if (nvs_open(nvs_namespace.c_str(), NVS_READONLY, &handle) != ESP_OK) {
         return {};
@@ -440,7 +447,7 @@ bool ReadRoutineSequenceMigrating(const std::string& nvs_namespace, uint32_t* se
     *sequence = 1;
 
     std::string raw;
-    if (LoadTextFile(kRoutineSequencePath, &raw, 32)) {
+    if (LoadTextFile(restore::Path(kRoutineSequencePath).c_str(), &raw, 32)) {
         char* end = nullptr;
         unsigned long value = std::strtoul(raw.c_str(), &end, 10);
         if (end != raw.c_str() && value > 0) {
@@ -450,7 +457,7 @@ bool ReadRoutineSequenceMigrating(const std::string& nvs_namespace, uint32_t* se
     }
 
     nvs_handle_t handle = 0;
-    if (nvs_open(nvs_namespace.c_str(), NVS_READONLY, &handle) == ESP_OK) {
+    if (!restore::Generation() && nvs_open(nvs_namespace.c_str(), NVS_READONLY, &handle) == ESP_OK) {
         uint32_t nvs_sequence = 1;
         esp_err_t err = nvs_get_u32(handle, kSequenceKey, &nvs_sequence);
         nvs_close(handle);
@@ -462,7 +469,7 @@ bool ReadRoutineSequenceMigrating(const std::string& nvs_namespace, uint32_t* se
 
     char buffer[24] = {};
     std::snprintf(buffer, sizeof(buffer), "%lu", static_cast<unsigned long>(*sequence));
-    if (SaveTextFile(kRoutineSequencePath, buffer)) {
+    if (SaveTextFile(restore::Path(kRoutineSequencePath).c_str(), buffer)) {
         DeleteRoutineNvsKey(nvs_namespace, kSequenceKey);
         ESP_LOGI(kTag, "Migrated routine sequence from NVS to care_data");
     }
@@ -473,7 +480,7 @@ bool ReadRoutineSequenceMigrating(const std::string& nvs_namespace, uint32_t* se
 bool WriteRoutineSequenceFile(const std::string& nvs_namespace, uint32_t sequence) {
     char buffer[24] = {};
     std::snprintf(buffer, sizeof(buffer), "%lu", static_cast<unsigned long>(sequence));
-    const bool ok = SaveTextFile(kRoutineSequencePath, buffer);
+    const bool ok = SaveTextFile(restore::Path(kRoutineSequencePath).c_str(), buffer);
     if (ok) DeleteRoutineNvsKey(nvs_namespace, kSequenceKey);
     return ok;
 }
@@ -496,6 +503,7 @@ std::optional<CareRoutine> LoadRoutineMigrating(const std::string& nvs_namespace
     std::optional<CareRoutine> routine = LoadRoutineFile(id);
     if (routine.has_value()) return routine;
 
+    if (restore::Generation()) return std::nullopt;
     const std::string key = RoutineKey(id);
 
     nvs_handle_t handle = 0;
@@ -524,13 +532,19 @@ std::optional<CareRoutine> LoadRoutineMigrating(const std::string& nvs_namespace
 NvsRoutineRepository::NvsRoutineRepository(std::string nvs_namespace)
     : nvs_namespace_(std::move(nvs_namespace)) {}
 
+bool NvsRoutineRepository::RestoreSequence(uint32_t& value, bool write) {
+    return write ? WriteRoutineSequenceFile(nvs_namespace_, value)
+                 : ReadRoutineSequenceMigrating(nvs_namespace_, &value);
+}
 bool NvsRoutineRepository::Init() {
+    if (restore::Staging()) return WriteRoutineIndexFile({});
+    if (restore::Generation()) return true;
     std::vector<RoutineId> ids = ReadRoutineIndexMigrating(nvs_namespace_);
-    WriteRoutineIndexFile(ids);
+    if (!WriteRoutineIndexFile(ids)) return false;
 
     uint32_t sequence = 1;
-    ReadRoutineSequenceMigrating(nvs_namespace_, &sequence);
-    WriteRoutineSequenceFile(nvs_namespace_, sequence);
+    if (!ReadRoutineSequenceMigrating(nvs_namespace_, &sequence) ||
+        !WriteRoutineSequenceFile(nvs_namespace_, sequence)) return false;
 
     ESP_LOGI(kTag, "Routine repository ready");
     return true;

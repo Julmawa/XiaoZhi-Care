@@ -29,19 +29,17 @@ CareAlarmScheduler::CareAlarmScheduler(RoutineRepository& routines,
                                        RoutineExecutionRepository& executions)
     : routines_(routines), executions_(executions) {}
 
-bool CareAlarmScheduler::AlreadyConfirmedToday(const RoutineId& routine_id,
+bool CareAlarmScheduler::AlreadyConfirmedToday(const std::vector<RoutineExecution>& items, const RoutineId& routine_id,
                                                const std::string& iso_date) const {
-    const std::vector<RoutineExecution> items = executions_.ListByRoutine(routine_id);
     return std::any_of(items.begin(), items.end(), [&](const RoutineExecution& execution) {
         return execution.iso_date == iso_date && execution.event == RoutineExecutionEvent::Confirmed;
     });
 }
 
-uint8_t CareAlarmScheduler::CountIndicatedToday(const RoutineId& routine_id,
+uint8_t CareAlarmScheduler::CountIndicatedToday(const std::vector<RoutineExecution>& items, const RoutineId& routine_id,
                                                 const std::string& iso_date) const {
     uint16_t count = 0;
 
-    const std::vector<RoutineExecution> items = executions_.ListByRoutine(routine_id);
     for (const RoutineExecution& execution : items) {
         if (IsSameIndication(execution, routine_id, iso_date)) {
             ++count;
@@ -57,7 +55,7 @@ uint8_t CareAlarmScheduler::CountIndicatedToday(const RoutineId& routine_id,
     return count > 255 ? 255 : static_cast<uint8_t>(count);
 }
 
-DailyTime CareAlarmScheduler::LastIndicatedTimeToday(const RoutineId& routine_id,
+DailyTime CareAlarmScheduler::LastIndicatedTimeToday(const std::vector<RoutineExecution>& items, const RoutineId& routine_id,
                                                      const std::string& iso_date,
                                                      bool& found) const {
     found = false;
@@ -72,7 +70,6 @@ DailyTime CareAlarmScheduler::LastIndicatedTimeToday(const RoutineId& routine_id
         }
     };
 
-    const std::vector<RoutineExecution> items = executions_.ListByRoutine(routine_id);
     for (const RoutineExecution& execution : items) {
         consider(execution);
     }
@@ -115,6 +112,28 @@ bool CareAlarmScheduler::RecordIndicated(const CareRoutine& routine,
     return executions_.Save(execution);
 }
 
+bool CareAlarmScheduler::ReportPresented(const CareAlarmAction& action,
+                                       const RoutineEvaluationContext& context,
+                                       const std::string& date) {
+    if (date!=offered_date_ || !(context.now==offered_time_) || !action.presentation_token) return false;
+    const auto offered=std::find_if(offered_.begin(),offered_.end(),[&](const auto& entry){
+        return entry.token==action.presentation_token && entry.id==action.routine_id;
+    });
+    if (offered==offered_.end()) return false;
+    offered_.erase(offered);
+    CareRoutine routine;
+    routine.id = action.routine_id;
+    RoutineExecution execution;
+    if (RecordIndicated(routine,context,date,action.safe_message,execution)) return true;
+    if (execution.IsValid()) {
+        volatile_indications_.erase(
+            std::remove_if(volatile_indications_.begin(),volatile_indications_.end(),
+                [&](const auto& old){ return old.iso_date != date; }), volatile_indications_.end());
+        if (volatile_indications_.size() < 1024) volatile_indications_.push_back(std::move(execution));
+    }
+    return false;
+}
+
 CareAlarmSchedulerResult CareAlarmScheduler::Tick(const RoutineEvaluationContext& context,
                                                   const std::string& iso_date) {
     return TickInternal(routines_.List(), context, iso_date, nullptr);
@@ -137,6 +156,9 @@ CareAlarmSchedulerResult CareAlarmScheduler::TickInternal(const std::vector<Care
                                                           const std::string& iso_date,
                                                           const RoutineId* only_routine_id) {
     CareAlarmSchedulerResult result;
+    offered_.clear();
+    offered_date_=iso_date;
+    offered_time_=context.now;
 
     if (!context.IsValid() || iso_date.size() != 10) {
         ESP_LOGW(kTag, "Invalid scheduler context");
@@ -169,19 +191,20 @@ CareAlarmSchedulerResult CareAlarmScheduler::TickInternal(const std::vector<Care
             continue;
         }
 
-        if (AlreadyConfirmedToday(routine.id, iso_date)) {
+        const auto history = executions_.ListByRoutine(routine.id);
+        if (AlreadyConfirmedToday(history, routine.id, iso_date)) {
             ++result.suppressed_count;
             continue;
         }
 
-        const uint8_t indicated_count = CountIndicatedToday(routine.id, iso_date);
+        const uint8_t indicated_count = CountIndicatedToday(history, routine.id, iso_date);
         if (indicated_count >= routine.alert.max_repeats) {
             ++result.suppressed_count;
             continue;
         }
 
         bool found_last = false;
-        const DailyTime last = LastIndicatedTimeToday(routine.id, iso_date, found_last);
+        const DailyTime last = LastIndicatedTimeToday(history, routine.id, iso_date, found_last);
         if (found_last && MinutesDiff(context.now, last) < static_cast<int>(routine.alert.repeat_minutes)) {
             ++result.suppressed_count;
             continue;
@@ -199,22 +222,11 @@ CareAlarmSchedulerResult CareAlarmScheduler::TickInternal(const std::vector<Care
         action.sound_pattern = routine.alert.sound_pattern;
         action.should_notify = true;
 
-        RoutineExecution execution;
-        action.execution_saved = RecordIndicated(routine, context, iso_date, action.safe_message, execution);
-        if (!action.execution_saved) {
-            ++result.storage_error_count;
-            if (execution.IsValid()) {
-                volatile_indications_.push_back(execution);
-            }
-            ESP_LOGW(kTag,
-                     "Alarm indicated but execution was not saved: routine=%s storage_save_failed=1",
-                     routine.id.Str().c_str());
-        }
-
-        ++result.notified_count;
+        action.presentation_token=++next_token_;
+        offered_.push_back({action.presentation_token,action.routine_id});
         result.actions.push_back(action);
         ESP_LOGI(kTag,
-                 "Alarm indicated: routine=%s visual=%d sound=%d voice=%d saved=%d visual_pattern=%d visual_color=%d sound_pattern=%d",
+                 "Alarm action queued: routine=%s visual=%d sound=%d voice=%d saved=%d visual_pattern=%d visual_color=%d sound_pattern=%d",
                  routine.id.Str().c_str(),
                  action.visual ? 1 : 0,
                  action.sound ? 1 : 0,

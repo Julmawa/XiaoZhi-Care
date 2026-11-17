@@ -1,3 +1,5 @@
+extern "C" void xiaozhi_care_alarm_arm_receipt(const char*, const char*);
+extern "C" bool xiaozhi_care_alarm_render_signal();
 #include "care_daily/care_alarm_runtime.h"
 
 #include <ctime>
@@ -16,11 +18,7 @@
 // DP040B_FASE2_GROUPED_AUDIO_RUNTIME
 // Reutiliza el mismo puente de audio local ya validado por DP-018.
 // La implementación fuerte está en main/application.cc.
-extern "C" bool xiaozhi_care_reminder_audio_notify(
-    const char* reminder_id,
-    const char* message,
-    const uint8_t* audio_data,
-    size_t audio_size);
+#include "care_voice/reminder_audio_bridge.h"
 
 namespace xiaozhi_care::daily {
 namespace {
@@ -176,23 +174,25 @@ bool CareAlarmRuntime::Start(const CareAlarmRuntimeConfig& config) {
         return false;
     }
 
-    if (task_handle_ != nullptr) {
+    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+    if (running_.load()) {
         ESP_LOGW(kTag, "Alarm runtime already running");
         return true;
     }
 
     config_ = config;
     stop_requested_ = false;
+    running_ = true;
 
     const BaseType_t result = xTaskCreate(&CareAlarmRuntime::TaskEntry,
                                           "care_alarm_rt",
                                           config_.task_stack_size,
                                           this,
                                           config_.task_priority,
-                                          &task_handle_);
+                                          nullptr);
 
     if (result != pdPASS) {
-        task_handle_ = nullptr;
+        running_ = false;
         ESP_LOGE(kTag, "Failed to create alarm runtime task");
         return false;
     }
@@ -205,11 +205,12 @@ bool CareAlarmRuntime::Start(const CareAlarmRuntimeConfig& config) {
 }
 
 void CareAlarmRuntime::Stop() {
+    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
     stop_requested_ = true;
 }
 
 bool CareAlarmRuntime::IsRunning() const {
-    return task_handle_ != nullptr;
+    return running_.load();
 }
 
 void CareAlarmRuntime::TaskEntry(void* arg) {
@@ -228,17 +229,11 @@ void CareAlarmRuntime::TaskLoop() {
     NvsRoutineRepository routine_repository;
     NvsRoutineExecutionRepository execution_repository;
 
-    if (!routine_repository.Init()) {
-        ESP_LOGE(kTag, "Routine repository init failed; alarm runtime stopped");
-        task_handle_ = nullptr;
-        return;
+    while (!stop_requested_ && (!routine_repository.Init() || !execution_repository.Init())) {
+        ESP_LOGW(kTag, "Care repositories unavailable; retrying");
+        vTaskDelay(pdMS_TO_TICKS(config_.tick_interval_ms));
     }
-
-    if (!execution_repository.Init()) {
-        ESP_LOGE(kTag, "Execution repository init failed; alarm runtime stopped");
-        task_handle_ = nullptr;
-        return;
-    }
+    if (stop_requested_) { running_ = false; return; }
 
     CareAlarmScheduler scheduler(routine_repository, execution_repository);
     CareAlarmNotifier notifier;
@@ -260,27 +255,27 @@ void CareAlarmRuntime::TaskLoop() {
 
         const CareAlarmSchedulerResult result = scheduler.Tick(context, iso_date);
 
-        if (result.due_count > 0 || result.notified_count > 0 || result.storage_error_count > 0) {
+        if (result.due_count > 0) {
             ESP_LOGI(kTag,
-                     "Alarm tick date=%s weekday=%u time=%02u:%02u due=%u notified=%u suppressed=%u storage_errors=%u",
+                     "Alarm tick date=%s weekday=%u time=%02u:%02u due=%u proposals=%u suppressed=%u",
                      iso_date.c_str(),
                      static_cast<unsigned>(context.iso_weekday),
                      static_cast<unsigned>(context.now.hour),
                      static_cast<unsigned>(context.now.minute),
                      static_cast<unsigned>(result.due_count),
-                     static_cast<unsigned>(result.notified_count),
-                     static_cast<unsigned>(result.suppressed_count),
-                     static_cast<unsigned>(result.storage_error_count));
+                     static_cast<unsigned>(result.actions.size()),
+                     static_cast<unsigned>(result.suppressed_count));
         }
 
         // DP-038 Fase 1:
-        // El scheduler ya registro cada rutina individualmente. Desde este punto
+        // El scheduler propuso cada rutina individualmente. Desde este punto
         // agrupamos solamente la salida fisica para evitar repetir voz/sonido/LED
         // cuando varias rutinas Medication pertenecen al mismo casillero y horario.
         std::vector<CareAlarmAction> presentation_actions;
         std::vector<std::string> presentation_group_keys;
         std::vector<std::string> presentation_audio_targets;  // DP-040B Fase 2
         std::vector<unsigned> presentation_group_members;
+        std::vector<std::vector<CareAlarmAction>> source_members;
 
         presentation_actions.reserve(result.actions.size());
         presentation_group_keys.reserve(result.actions.size());
@@ -316,6 +311,7 @@ void CareAlarmRuntime::TaskLoop() {
                 presentation_group_keys.emplace_back();
                 presentation_audio_targets.emplace_back();
                 presentation_group_members.push_back(1);
+                source_members.push_back({source_action});
                 continue;
             }
 
@@ -339,6 +335,7 @@ void CareAlarmRuntime::TaskLoop() {
                 presentation_audio_targets.push_back(
                     Dp040bPillboxAudioTargetKey(routine.value()));
                 presentation_group_members.push_back(1);
+                source_members.push_back({source_action});
                 continue;
             }
 
@@ -360,6 +357,7 @@ void CareAlarmRuntime::TaskLoop() {
                 grouped.execution_saved && source_action.execution_saved;
 
             ++presentation_group_members[existing_index];
+            source_members[existing_index].push_back(source_action);
 
             ESP_LOGI(kTag,
                      "DP-038 merged pillbox alarm: source=%s into=%s key=%s members=%u",
@@ -383,15 +381,14 @@ void CareAlarmRuntime::TaskLoop() {
 
             if (!presentation_group_keys[action_index].empty()) {
                 ESP_LOGI(kTag,
-                         "DP-038 pillbox group ready: representative=%s members=%u key=%s message=%s",
+                         "DP-038 pillbox group ready: representative=%s members=%u key=%s",
                          action.routine_id.Str().c_str(),
                          presentation_group_members[action_index],
-                         presentation_group_keys[action_index].c_str(),
-                         action.safe_message.c_str());
+                         presentation_group_keys[action_index].c_str());
             }
 
             ESP_LOGI(kTag,
-                     "Runtime alarm ready: routine=%s visual=%d sound=%d voice=%d saved=%d visual_pattern=%d visual_color=%d sound_pattern=%d message=%s",
+                     "Runtime alarm ready: routine=%s visual=%d sound=%d voice=%d saved=%d visual_pattern=%d visual_color=%d sound_pattern=%d",
                      action.routine_id.Str().c_str(),
                      action.visual ? 1 : 0,
                      action.sound ? 1 : 0,
@@ -399,13 +396,30 @@ void CareAlarmRuntime::TaskLoop() {
                      action.execution_saved ? 1 : 0,
                      static_cast<int>(action.visual_pattern),
                      static_cast<int>(action.visual_color),
-                     static_cast<int>(action.sound_pattern),
-                     action.safe_message.c_str());
+                     static_cast<int>(action.sound_pattern));
 
             // DP040B_FASE2_GROUPED_AUDIO_RUNTIME
             // Si este grupo tiene un OGG familiar asignado, intentamos reproducirlo
             // una sola vez para la alarma física agrupada. No cambia ejecuciones,
             // confirmaciones ni estados de medicación.
+            // A different alert can become visible/audible even if its required
+            // channel then fails. Never leave the previous alert armed.
+            ::xiaozhi_care_alarm_arm_receipt(iso_date.c_str(),nullptr);
+            const bool sound_required = action.sound || action.voice;
+            const bool signal_written = sound_required && ::xiaozhi_care_alarm_render_signal();
+            CareAlarmAction visual = action;
+            visual.sound = false;
+            visual.voice = false;
+            const bool visual_presented = notifier.Notify(visual);
+            const bool presented = sound_required ? signal_written : visual_presented;
+            if (presented) {
+                ::xiaozhi_care_alarm_arm_receipt(iso_date.c_str(),
+                    source_members[action_index].size() == 1 ? action.routine_id.Str().c_str() : nullptr);
+                for (const auto& source : source_members[action_index]) {
+                    if (!scheduler.ReportPresented(source,context,iso_date))
+                        ESP_LOGW(kTag,"Care cue emitted, history not committed");
+                }
+            }
             bool grouped_audio_handled = false;
             const std::string& audio_target =
                 presentation_audio_targets[action_index];
@@ -426,7 +440,7 @@ void CareAlarmRuntime::TaskLoop() {
                                 audio_target.c_str(),
                                 action.safe_message.c_str(),
                                 reinterpret_cast<const uint8_t*>(audio_bytes.data()),
-                                audio_bytes.size());
+                                audio_bytes.size(),{});
 
                         if (grouped_audio_handled) {
                             ESP_LOGI(
@@ -452,32 +466,16 @@ void CareAlarmRuntime::TaskLoop() {
                 }
             }
 
-            CareAlarmAction notify_action = action;
-            if (grouped_audio_handled) {
-                // El OGG reemplaza la voz/sonido genéricos para evitar audio doble.
-                // La presentación visual continúa normalmente.
-                notify_action.voice = false;
-                notify_action.sound = false;
-            }
+            ESP_LOGI(kTag,"Care signal sent=%d visual=%d recording_queued=%d",
+                     signal_written, visual_presented, grouped_audio_handled);
 
-            const bool fallback_handled = notifier.Notify(notify_action);
-            const bool hardware_handled =
-                grouped_audio_handled || fallback_handled;
-
-            ESP_LOGI(kTag,
-                     "Runtime notifier result: routine=%s hardware_handled=%d visual_requests=%lu sound_requests=%lu voice_requests=%lu",
-                     action.routine_id.Str().c_str(),
-                     hardware_handled ? 1 : 0,
-                     static_cast<unsigned long>(notifier.GetStats().visual_requests),
-                     static_cast<unsigned long>(notifier.GetStats().sound_requests),
-                     static_cast<unsigned long>(notifier.GetStats().voice_requests));
         }
 
         vTaskDelay(pdMS_TO_TICKS(config_.tick_interval_ms));
     }
 
     ESP_LOGI(kTag, "Alarm runtime stopped");
-    task_handle_ = nullptr;
+    running_ = false;
 }
 
 }  // namespace xiaozhi_care::daily

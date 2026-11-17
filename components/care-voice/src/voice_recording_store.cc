@@ -1,3 +1,7 @@
+#include "care_restore.h"
+#include "nvs.h"
+#include <cerrno>
+#include <unistd.h>
 #include "care_voice/voice_recording_store.h"
 
 #include <algorithm>
@@ -45,12 +49,15 @@ VoiceRecordingStore& VoiceRecordingStore::GetInstance() {
 }
 
 bool VoiceRecordingStore::Init() {
+    std::lock_guard<std::recursive_mutex> lock(index_mutex_);
     if (ready_) return true;
     esp_vfs_spiffs_conf_t conf = {};
     conf.base_path = kBasePath;
     conf.partition_label = kPartitionLabel;
     conf.max_files = 16;
-    conf.format_if_mount_failed = true;
+    // DP-TG-045: preserve existing voice data if SPIFFS cannot mount.
+    // Never format silently during experimental firmware installation.
+    conf.format_if_mount_failed = false;
     esp_err_t err = esp_vfs_spiffs_register(&conf);
     if (err == ESP_ERR_INVALID_STATE) {
         ESP_LOGW(kTag, "Voice SPIFFS already mounted");
@@ -72,6 +79,7 @@ bool VoiceRecordingStore::Init() {
 }
 
 std::vector<VoiceRecordingInfo> VoiceRecordingStore::List() {
+    std::lock_guard<std::recursive_mutex> lock(index_mutex_);
     std::vector<VoiceRecordingInfo> values;
     if (!Init()) return values;
     LoadIndex(values);
@@ -97,6 +105,7 @@ bool VoiceRecordingStore::FindByReminder(const std::string& reminder_id, VoiceRe
 }
 
 bool VoiceRecordingStore::LoadAudio(const std::string& id, std::string& audio_bytes, VoiceRecordingInfo* info) {
+    std::lock_guard<std::recursive_mutex> lock(index_mutex_);
     audio_bytes.clear();
     VoiceRecordingInfo meta;
     if (!Find(id, meta) || !meta.enabled) return false;
@@ -160,6 +169,7 @@ bool VoiceRecordingStore::Save(const std::string& label,
                                size_t size,
                                VoiceRecordingInfo& saved,
                                std::string& error) {
+    std::lock_guard<std::recursive_mutex> lock(index_mutex_);
     saved = {};
     error.clear();
     if (!Init()) { error = "No se pudo inicializar el almacenamiento de grabaciones"; return false; }
@@ -172,7 +182,8 @@ bool VoiceRecordingStore::Save(const std::string& label,
     }
     auto validation = ValidateOggOpus(data, size);
     if (!validation.ok) { error = validation.error; return false; }
-    auto values = List();
+    std::vector<VoiceRecordingInfo> values;
+    if (!LoadIndex(values)) { error = "VOICE_INDEX_UNREADABLE"; return false; }
     if (values.size() >= limits_.max_recordings) { error = "VOICE_LIMIT_REACHED"; return false; }
     const auto already_assigned = std::find_if(
         values.begin(), values.end(),
@@ -183,11 +194,15 @@ bool VoiceRecordingStore::Save(const std::string& label,
     }
     const std::string id = NextId(values);
     const std::string path = std::string(kBasePath) + "/" + EscapeFileId(id) + ".ogg";
+    FILE* prior = std::fopen(path.c_str(), "rb");
+    if (prior) { std::fclose(prior); error = "VOICE_EXISTING_FILE"; return false; }
+    if (errno != ENOENT) { error = "VOICE_STORAGE_NOT_READY"; return false; }
     FILE* f = std::fopen(path.c_str(), "wb");
     if (!f) { error = "No se pudo crear el archivo de audio"; return false; }
     const size_t written = std::fwrite(data, 1, size, f);
-    std::fclose(f);
-    if (written != size) { std::remove(path.c_str()); error = "No se pudo guardar todo el archivo"; return false; }
+    const bool synced = std::fflush(f)==0 && ::fsync(::fileno(f))==0;
+    const bool closed = std::fclose(f)==0;
+    if (written != size || !synced || !closed) { std::remove(path.c_str()); error = "No se pudo guardar todo el archivo"; return false; }
     saved.id = id;
     saved.label = label;
     saved.text = text;
@@ -197,9 +212,8 @@ bool VoiceRecordingStore::Save(const std::string& label,
     saved.size_bytes = size;
     saved.enabled = true;
     values.push_back(saved);
-    if (!SaveIndex(values)) { std::remove(path.c_str()); error = "No se pudo guardar el índice"; return false; }
-    ESP_LOGI(kTag, "Voice recording saved id=%s label=%s duration_ms=%u size=%u",
-             saved.id.c_str(), saved.label.c_str(), static_cast<unsigned>(saved.duration_ms),
+    if (!SaveIndex(values)) { error = "No se pudo guardar el índice"; return false; }
+    ESP_LOGI(kTag, "Voice recording saved duration_ms=%u size=%u", static_cast<unsigned>(saved.duration_ms),
              static_cast<unsigned>(saved.size_bytes));
     return true;
 }
@@ -207,9 +221,11 @@ bool VoiceRecordingStore::Save(const std::string& label,
 bool VoiceRecordingStore::AssignToReminder(const std::string& id,
                                                const std::string& reminder_id,
                                                std::string& error) {
+    std::lock_guard<std::recursive_mutex> lock(index_mutex_);
     error.clear();
     if (!Init()) { error = "VOICE_STORAGE_NOT_READY"; return false; }
-    auto values = List();
+    std::vector<VoiceRecordingInfo> values;
+    if (!LoadIndex(values)) { error = "VOICE_INDEX_UNREADABLE"; return false; }
     auto current = std::find_if(
         values.begin(), values.end(),
         [&](const auto& v) { return v.id == id; });
@@ -233,8 +249,10 @@ bool VoiceRecordingStore::AssignToReminder(const std::string& id,
 }
 
 bool VoiceRecordingStore::UnassignReminder(const std::string& reminder_id) {
+    std::lock_guard<std::recursive_mutex> lock(index_mutex_);
     if (reminder_id.empty() || !Init()) return false;
-    auto values = List();
+    std::vector<VoiceRecordingInfo> values;
+    if (!LoadIndex(values)) return false;
     bool changed = false;
     for (auto& value : values) {
         if (value.reminder_id == reminder_id) {
@@ -249,9 +267,11 @@ bool VoiceRecordingStore::UnassignReminder(const std::string& reminder_id) {
 }
 
 bool VoiceRecordingStore::Delete(const std::string& id, std::string* error) {
+    std::lock_guard<std::recursive_mutex> lock(index_mutex_);
     if (error) error->clear();
     if (!Init()) { if (error) *error = "VOICE_STORAGE_NOT_READY"; return false; }
-    auto values = List();
+    std::vector<VoiceRecordingInfo> values;
+    if (!LoadIndex(values)) { if (error) *error = "VOICE_INDEX_UNREADABLE"; return false; }
     auto it = std::find_if(values.begin(), values.end(), [&](const auto& v) { return v.id == id; });
     if (it == values.end()) { if (error) *error = "NOT_FOUND"; return false; }
     if (!it->reminder_id.empty()) {
@@ -266,22 +286,41 @@ bool VoiceRecordingStore::Delete(const std::string& id, std::string* error) {
     return true;
 }
 
+namespace {
+const char* VoiceIndexSlot(uint8_t slot) {
+    return slot == 1 ? "/voice/idx1.json" : "/voice/idx2.json";
+}
+bool ReadVoiceIndexSlot(uint8_t& slot) {
+    slot = 0;
+    nvs_handle_t handle;
+    auto err = nvs_open("care_voiceidx",NVS_READONLY,&handle);
+    if (err == ESP_ERR_NVS_NOT_FOUND) return true;
+    if (err != ESP_OK) return false;
+    err = nvs_get_u8(handle,"active",&slot);
+    nvs_close(handle);
+    return err == ESP_ERR_NVS_NOT_FOUND || (err == ESP_OK && (slot == 1 || slot == 2));
+}
+}
+
 bool VoiceRecordingStore::LoadIndex(std::vector<VoiceRecordingInfo>& values) {
     values.clear();
-    FILE* f = std::fopen(kIndexPath, "rb");
-    if (!f) return true;
+    uint8_t slot;
+    if (!ReadVoiceIndexSlot(slot)) return false;
+    FILE* f = std::fopen(slot ? VoiceIndexSlot(slot) : kIndexPath, "rb");
+    if (!f) return slot == 0 && errno == ENOENT;
     std::fseek(f, 0, SEEK_END);
     long len = std::ftell(f);
     std::rewind(f);
     if (len <= 0 || len > 8192) { std::fclose(f); return false; }
     std::string raw(static_cast<size_t>(len), '\0');
-    std::fread(raw.data(), 1, raw.size(), f);
-    std::fclose(f);
+    const size_t n = std::fread(raw.data(), 1, raw.size(), f);
+    const bool closed = std::fclose(f)==0;
+    if (n != raw.size() || !closed) return false;
     cJSON* root = cJSON_ParseWithLength(raw.data(), raw.size());
     if (!cJSON_IsArray(root)) { if (root) cJSON_Delete(root); return false; }
     cJSON* item = nullptr;
     cJSON_ArrayForEach(item, root) {
-        if (!cJSON_IsObject(item)) continue;
+        if (!cJSON_IsObject(item)) { cJSON_Delete(root); values.clear(); return false; }
         VoiceRecordingInfo v;
         v.id = JsonString(item, "id");
         v.label = JsonString(item, "label");
@@ -291,7 +330,12 @@ bool VoiceRecordingStore::LoadIndex(std::vector<VoiceRecordingInfo>& values) {
         v.duration_ms = JsonU32(item, "duration_ms");
         v.size_bytes = JsonU32(item, "size_bytes");
         v.enabled = JsonBool(item, "enabled", true);
-        if (!v.id.empty() && !v.file_path.empty()) values.push_back(std::move(v));
+        if (v.id.empty() || v.file_path != std::string(kBasePath)+"/"+EscapeFileId(v.id)+".ogg" ||
+            values.size() >= limits_.max_recordings ||
+            std::any_of(values.begin(),values.end(),[&](const auto& row){ return row.id == v.id; })) {
+            cJSON_Delete(root); values.clear(); return false;
+        }
+        values.push_back(std::move(v));
     }
     cJSON_Delete(root);
     return true;
@@ -316,12 +360,17 @@ bool VoiceRecordingStore::SaveIndex(const std::vector<VoiceRecordingInfo>& value
     char* raw = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     if (!raw) return false;
-    FILE* f = std::fopen(kIndexPath, "wb");
-    if (!f) { cJSON_free(raw); return false; }
-    std::fwrite(raw, 1, std::strlen(raw), f);
-    std::fclose(f);
+    const std::string serialized(raw);
     cJSON_free(raw);
-    return true;
+    uint8_t slot;
+    if (serialized.size()>8192 || !ReadVoiceIndexSlot(slot)) return false;
+    const uint8_t next = slot == 1 ? 2 : 1;
+    if (!restore::WriteCandidate(VoiceIndexSlot(next),serialized)) return false;
+    nvs_handle_t handle;
+    if (nvs_open("care_voiceidx",NVS_READWRITE,&handle)!=ESP_OK) return false;
+    const bool ok = nvs_set_u8(handle,"active",next)==ESP_OK && nvs_commit(handle)==ESP_OK;
+    nvs_close(handle);
+    return ok;
 }
 
 std::string VoiceRecordingStore::NextId(const std::vector<VoiceRecordingInfo>& existing) const {

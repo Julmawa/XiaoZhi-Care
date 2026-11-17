@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstddef>
+#include <atomic>
+#include <mutex>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -68,7 +70,8 @@ public:
 
 private:
     VoiceRecordingStore() = default;
-    bool ready_{false};
+    std::atomic<bool> ready_{false};
+    std::recursive_mutex index_mutex_;
     VoiceRecordingLimits limits_{};
 
     std::string NextId(const std::vector<VoiceRecordingInfo>& existing) const;

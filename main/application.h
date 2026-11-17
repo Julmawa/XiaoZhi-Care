@@ -82,6 +82,9 @@ public:
     /**
      * Schedule a callback to be executed in the main task
      */
+    bool PlayCareSignal();
+    uint64_t CaptureCareReceipt();
+    void ConfirmCareReceipt(uint64_t press);
     void Schedule(std::function<void()>&& callback);
 
     /**
@@ -115,6 +118,12 @@ public:
     bool UpgradeFirmware(const std::string& url, const std::string& version = "");
     bool CanEnterSleepMode();
     void SendMcpMessage(const std::string& payload);
+    bool RequestCareFamilyMessageTrigger();
+    bool RequestCareFamilyMessageNotification(
+        const std::string& sender,
+        const std::string& message);
+    // DP-TG-018 - inicia una prueba de MP3, no confirma escucha.
+    bool RequestCareFamilyAudioPlayback(const std::string& audio_url);
     void RegisterMcpBroadcastCallback(std::function<void(const std::string&)> callback);
     void SetAecMode(AecMode mode);
     AecMode GetAecMode() const { return aec_mode_; }
@@ -126,7 +135,8 @@ public:
     bool RequestCareReminderAudio(const std::string& target_id,
                                   const std::string& message,
                                   const uint8_t* audio_data,
-                                  size_t audio_size);
+                                  size_t audio_size,
+                                  std::shared_ptr<std::atomic<int>> result = {});
     AudioService& GetAudioService() { return audio_service_; }
     
     /**
@@ -152,7 +162,7 @@ private:
     ListeningMode listening_mode_ = kListeningModeAutoStop;
     AecMode aec_mode_ = kAecOff;
     std::string last_error_message_;
-    std::string care_reminder_audio_cache_;  // DP040B_FASE2B_STRONG_AUDIO_HOOK
+    std::atomic<bool> care_recording_active_{false};
     AudioService audio_service_;
     NotifyPlayer notify_player_;
     uint32_t notification_playback_id_ = 0;
@@ -192,6 +202,18 @@ private:
     void HandleSlowSpeechInputActivity();
     void HandleSlowSpeechTimeout();
 
+    // Read/written only on the Application thread.
+    struct PendingTelegramCue {
+        std::string account;
+        std::string audio_url;
+        std::shared_ptr<std::atomic<int>> delivery;
+        std::shared_ptr<LocalPlaybackReceipt> cue;
+        int64_t deadline_us = 0;
+        uint32_t conversation_epoch = 0;
+    };
+    PendingTelegramCue pending_telegram_cue_;
+    std::atomic<uint32_t> telegram_conversation_epoch_{0};
+    void AdvanceTelegramCue();
     void StartNotification(std::string audio_url, std::vector<NotifySubtitle> subtitles);
     void StopNotification();
     void HandleNotificationFinished(uint32_t playback_id, bool success);

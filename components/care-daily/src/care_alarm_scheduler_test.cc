@@ -171,6 +171,9 @@ bool ValidateNormalScheduler() {
              static_cast<unsigned>(first.suppressed_count),
              static_cast<unsigned>(first.storage_error_count));
 
+    if (first.actions.size() != 1 || !executions.List().empty() ||
+        !scheduler.ReportPresented(first.actions.front(),context,kTestDate)) return false;
+
     const CareAlarmSchedulerResult second = scheduler.TickRoutines(test_routines, context, kTestDate);
     ESP_LOGI(kTag, "SECOND TICK: due=%u notified=%u suppressed=%u storage_errors=%u",
              static_cast<unsigned>(second.due_count),
@@ -179,7 +182,7 @@ bool ValidateNormalScheduler() {
              static_cast<unsigned>(second.storage_error_count));
 
     return first.due_count == 1 &&
-           first.notified_count == 1 &&
+           first.notified_count == 0 &&
            first.suppressed_count == 0 &&
            first.storage_error_count == 0 &&
            second.due_count == 1 &&
@@ -211,6 +214,9 @@ bool ValidateStorageFailureDoesNotBlockAlarm() {
              static_cast<unsigned>(first.suppressed_count),
              static_cast<unsigned>(first.storage_error_count));
 
+    if (first.actions.size() != 1 ||
+        scheduler.ReportPresented(first.actions.front(),context,kTestDate)) return false;
+
     const CareAlarmSchedulerResult second = scheduler.TickRoutines(test_routines, context, kTestDate);
     ESP_LOGI(kTag, "VOLATILE SUPPRESSION TICK: due=%u notified=%u suppressed=%u storage_errors=%u",
              static_cast<unsigned>(second.due_count),
@@ -219,9 +225,9 @@ bool ValidateStorageFailureDoesNotBlockAlarm() {
              static_cast<unsigned>(second.storage_error_count));
 
     return first.due_count == 1 &&
-           first.notified_count == 1 &&
+           first.notified_count == 0 &&
            first.suppressed_count == 0 &&
-           first.storage_error_count == 1 &&
+           first.storage_error_count == 0 &&
            second.due_count == 1 &&
            second.notified_count == 0 &&
            second.suppressed_count == 1;

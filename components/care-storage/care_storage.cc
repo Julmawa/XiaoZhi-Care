@@ -1,4 +1,5 @@
-﻿#include "care_storage.h"
+#include "care_restore.h"
+#include "care_storage.h"
 
 #include <cerrno>
 #include <cstdio>
@@ -74,7 +75,9 @@ bool MountCareDataSpiffs() {
     conf.base_path = kCareDataBasePath;
     conf.partition_label = kCareDataPartitionLabel;
     conf.max_files = 8;
-    conf.format_if_mount_failed = true;
+    // DP-TG-045: preserve existing CARE data if SPIFFS cannot mount.
+    // Never format silently during experimental firmware installation.
+    conf.format_if_mount_failed = false;
 
     esp_err_t err = esp_vfs_spiffs_register(&conf);
     if (err == ESP_ERR_INVALID_STATE) {
@@ -142,16 +145,17 @@ bool EnsureCareDataDirs() {
 std::string MakeCareDataRecordPath(const char* key) {
     char path[128] = {};
     std::snprintf(path, sizeof(path), "%s/rec_%s.json", kCareDataBasePath, key);
-    return path;
+    return restore::Path(path);
 }
 
 std::string MakeCareDataSequencePath(const char* key) {
     char path[128] = {};
     std::snprintf(path, sizeof(path), "%s/seq_%s.txt", kCareDataBasePath, key);
-    return path;
+    return restore::Path(path);
 }
 
 CareError SaveTextFile(const std::string& path, const std::string& text) {
+    if (restore::Staging()) return restore::WriteCandidate(path.c_str(), text) ? CareError::OK : CareError::STORAGE_ERROR;
     if (!EnsureCareDataDirs()) return CareError::STORAGE_ERROR;
     FILE* f = std::fopen(path.c_str(), "wb");
     if (f == nullptr) return CareError::STORAGE_ERROR;
@@ -201,6 +205,7 @@ CareError DeleteTextFile(const std::string& path) {
 }
 
 CareError NvsSaveStringRecord(const char* key, const std::string& json) {
+    if (restore::Generation()) return CareError::STORAGE_ERROR;
     nvs_handle_t handle = 0;
     esp_err_t err = nvs_open(kNamespace, NVS_READWRITE, &handle);
     if (err == ESP_OK) err = nvs_set_str(handle, key, json.c_str());
@@ -210,6 +215,7 @@ CareError NvsSaveStringRecord(const char* key, const std::string& json) {
 }
 
 CareError NvsLoadStringRecord(const char* key, std::string& json) {
+    if (restore::Generation()) return CareError::NOT_FOUND;
     json.clear();
     nvs_handle_t handle = 0;
     esp_err_t err = nvs_open(kNamespace, NVS_READONLY, &handle);
@@ -235,6 +241,7 @@ CareError NvsLoadStringRecord(const char* key, std::string& json) {
 }
 
 CareError NvsDeleteRecord(const char* key) {
+    if (restore::Generation()) return CareError::NOT_FOUND;
     nvs_handle_t handle = 0;
     esp_err_t err = nvs_open(kNamespace, NVS_READWRITE, &handle);
     if (err == ESP_OK) err = nvs_erase_key(handle, key);
@@ -244,6 +251,7 @@ CareError NvsDeleteRecord(const char* key) {
 }
 
 CareError NvsReadSequence(const char* key, uint32_t& sequence) {
+    if (restore::Generation()) return CareError::NOT_FOUND;
     nvs_handle_t handle = 0;
     esp_err_t err = nvs_open(kNamespace, NVS_READONLY, &handle);
     if (err == ESP_OK) err = nvs_get_u32(handle, key, &sequence);
@@ -256,6 +264,7 @@ CareError NvsReadSequence(const char* key, uint32_t& sequence) {
 }
 
 CareError NvsWriteSequence(const char* key, uint32_t sequence) {
+    if (restore::Generation()) return CareError::STORAGE_ERROR;
     nvs_handle_t handle = 0;
     esp_err_t err = nvs_open(kNamespace, NVS_READWRITE, &handle);
     if (err == ESP_OK) err = nvs_set_u32(handle, key, sequence);

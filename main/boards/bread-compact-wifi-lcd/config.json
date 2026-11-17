@@ -5,7 +5,16 @@
         {
             "name": "bread-compact-wifi-lcd",
             "sdkconfig_append": [
-                "CONFIG_LCD_ST7789_240X320=y"
+                "CONFIG_LCD_ST7789_240X240_7PIN=y"
+            ]
+        },
+        {
+            "name": "bread-compact-wifi-lcd-care-7pin",
+            "sdkconfig_append": [
+                "CONFIG_LCD_ST7789_240X240_7PIN=y",
+                "CONFIG_PARTITION_TABLE_CUSTOM=y",
+                "CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=\"partitions/xiaozhi-care/16m_care.csv\"",
+                "CONFIG_CARE_OTA_PROTECTION=y"
             ]
         }
     ]

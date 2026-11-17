@@ -4,7 +4,7 @@ idf_component_register(
         "src/nvs_family_relationship_repository.cc"
     INCLUDE_DIRS
         "include"
-    REQUIRES
+    REQUIRES care-restore
         nvs_flash
         cjson
 )

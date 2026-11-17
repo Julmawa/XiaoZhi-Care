@@ -1,3 +1,4 @@
+#include <atomic>
 #ifndef _AUDIO_CODEC_H
 #define _AUDIO_CODEC_H
 
@@ -34,6 +35,9 @@ public:
     virtual void EnableInput(bool enable);
     virtual void EnableOutput(bool enable);
 
+    bool WriteChecked(const std::vector<int16_t>& pcm) {
+        return !pcm.empty() && Write(pcm.data(), pcm.size()) == static_cast<int>(pcm.size());
+    }
     virtual void OutputData(std::vector<int16_t>& data);
     virtual bool InputData(std::vector<int16_t>& data);
     virtual void Start();
@@ -55,8 +59,8 @@ protected:
 
     bool duplex_ = false;
     bool input_reference_ = false;
-    bool input_enabled_ = false;
-    bool output_enabled_ = false;
+    std::atomic<bool> input_enabled_{false};
+    std::atomic<bool> output_enabled_{false};
     int input_sample_rate_ = 0;
     int output_sample_rate_ = 0;
     int input_channels_ = 1;

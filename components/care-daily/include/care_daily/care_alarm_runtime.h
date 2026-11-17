@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <atomic>
+#include <mutex>
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -56,8 +58,9 @@ private:
     void TaskLoop();
 
     CareAlarmRuntimeConfig config_{};
-    TaskHandle_t task_handle_{nullptr};
-    volatile bool stop_requested_{false};
+    std::mutex lifecycle_mutex_;
+    std::atomic<bool> running_{false};
+    std::atomic<bool> stop_requested_{false};
 };
 
 }  // namespace xiaozhi_care::daily

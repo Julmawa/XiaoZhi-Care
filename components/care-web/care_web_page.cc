@@ -372,6 +372,129 @@ button,input,textarea,select{font:inherit}button{cursor:pointer}.shell{max-width
   .radioStationActions{justify-content:flex-start}
 }
 
+
+/* DP-HA-009_HOME_ASSISTANT_WEB */
+.haHero{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:16px}
+.haState{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;font-size:13px;font-weight:900;border:1px solid #d6e7fa;background:#f5f9ff;color:#405273}
+.haState.ok{background:#eafaf3;color:#08744c;border-color:#c8f0df}
+.haState.bad{background:#fff0f1;color:#9b2727;border-color:#ffd4db}
+.haDot{width:9px;height:9px;border-radius:999px;background:currentColor}
+.haCards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.haMetricGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:14px}
+.haMetric{padding:16px;border:1px solid #dce8f7;border-radius:18px;background:linear-gradient(180deg,#fff,#f8fbff)}
+.haMetricLabel{font-size:12px;font-weight:850;color:var(--muted)}
+.haMetricValue{margin-top:5px;font-size:30px;line-height:1;font-weight:950;color:var(--navy);letter-spacing:-.04em}
+.haCondition{margin-top:12px;font-weight:850;color:#405273}
+@media(max-width:760px){.haCards,.haMetricGrid{grid-template-columns:1fr}.haHero{align-items:flex-start;flex-direction:column}}
+
+
+/* DP-HA-010A_ENTITY_DISCOVERY */
+.haEntityHead{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.haEntityGroups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}
+.haEntityGroup{border:1px solid #dce8f7;border-radius:18px;padding:14px;background:#fbfdff}
+.haEntityGroup h3{margin:0 0 10px;font-size:15px;color:var(--navy)}
+.haEntityList{display:flex;flex-direction:column;gap:8px}
+.haEntityRow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:start;padding:10px 11px;border:1px solid #e4edf7;border-radius:13px;background:white}
+.haEntityName{font-weight:900;color:#17345f}
+.haEntityId{font-size:11px;color:#7183a0;overflow-wrap:anywhere;margin-top:3px}
+.haEntityState{font-size:11px;font-weight:850;color:#405273;background:#eef6ff;border-radius:999px;padding:4px 8px;white-space:nowrap}
+@media(max-width:760px){.haEntityGroups{grid-template-columns:1fr}}
+
+
+/* DP-HA-010B_ALLOWLIST */
+.haAllowControl{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:800;color:#405273}
+.haAllowControl input{width:18px;height:18px;accent-color:var(--blue)}
+.haReadOnlyTag{font-size:11px;font-weight:800;color:#6d7d97;background:#f1f4f8;border-radius:999px;padding:4px 8px;white-space:nowrap}
+.haTechToggle{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:800;color:#405273}
+.haTechToggle input{width:17px;height:17px;accent-color:var(--blue)}
+
+
+/* DP047_PANEL_UNIDO_SIN_AVISOS - ajuste exclusivamente visual */
+/* Ocultar tres avisos informativos amarillos del inicio y Sistema.
+   No afecta las alertas de CARE, ni los mensajes de error o confirmacion. */
+.shell > .notice,
+#section-maintenance > .notice,
+#section-maintenance .systemAudioNotice {
+  display: none !important;
+}
+
+/* Navegacion con grupos unidos, sin separaciones exteriores. */
+#appView > .tabs.careNav {
+  gap: 0 !important;
+  margin-bottom: 0 !important;
+}
+#appView > .tabs.careNav > .careNavGroup {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+/* Sistema: dos columnas independientes, pero con tarjetas pegadas. */
+#section-maintenance .systemOrderedGrid {
+  gap: 0 !important;
+  margin-top: 0 !important;
+}
+#section-maintenance .systemOrderedGrid > .systemStackColumn {
+  gap: 0 !important;
+}
+#section-maintenance .systemOrderedGrid .card {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  margin: 0 !important;
+}
+
+/* Otras secciones: unir tarjetas del mismo nivel, sin tocar
+   los espacios internos de formularios, botones ni campos. */
+#appView .section > .grid {
+  gap: 0 !important;
+}
+#appView .section > .grid > .card,
+#appView .section > .card {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+#appView .section > .card[style*="margin-top"] {
+  margin-top: 0 !important;
+}
+/* FIN DP047_PANEL_UNIDO_SIN_AVISOS */
+
+/* DP047B_COLUMNAS_INDEPENDIENTES_CSS
+   Las tarjetas de cada lado se apilan sin depender de la altura del otro. */
+#section-maintenance .systemOrderedGrid {
+  display:grid !important;
+  grid-template-columns:minmax(0,.82fr) minmax(0,1.18fr) !important;
+  gap:0 !important;
+  align-items:start !important;
+  margin-top:0 !important;
+}
+#section-maintenance .systemOrderedGrid > .systemStackColumn {
+  display:flex !important;
+  flex-direction:column !important;
+  align-items:stretch !important;
+  justify-content:flex-start !important;
+  gap:0 !important;
+  min-width:0 !important;
+}
+#section-maintenance .systemOrderedGrid > .systemStackColumn > .card {
+  margin:0 !important;
+  border-radius:0 !important;
+  box-shadow:none !important;
+  min-width:0 !important;
+}
+#section-maintenance .systemOrderedGrid > .systemUsageCompact {
+  grid-column:1/-1 !important;
+  margin:0 !important;
+}
+@media(max-width:900px) {
+  #section-maintenance .systemOrderedGrid {
+    grid-template-columns:minmax(0,1fr) !important;
+  }
+  #section-maintenance .systemOrderedGrid > .systemStackColumn {
+    display:flex !important;
+  }
+  #section-maintenance .systemOrderedGrid > .systemUsageCompact {
+    grid-column:1 !important;
+  }
+}
 </style>
 </head>
 <body>
@@ -461,8 +584,11 @@ button,input,textarea,select{font:inherit}button{cursor:pointer}.shell{max-width
           <span class="careNavHint">Audio, memoria y mantenimiento</span>
         </div>
         <div class="careNavItems">
+          <button class="tab" data-tab="homeassistant" type="button">
+            <span class="careNavIcon">07</span><span>Home Assistant</span>
+          </button>
           <button class="tab" data-tab="maintenance" type="button">
-            <span class="careNavIcon">07</span><span>Sistema</span>
+            <span class="careNavIcon">08</span><span>Sistema</span>
           </button>
         </div>
       </div>
@@ -481,6 +607,28 @@ button,input,textarea,select{font:inherit}button{cursor:pointer}.shell{max-width
             <div class="field"><label>Alias separados por coma</label><input id="personAliases" maxlength="390"></div>
             <div class="field"><label>Notas privadas de administración</label><textarea id="personNotes" maxlength="256"></textarea></div>
             <label class="check"><input id="personEnabled" type="checkbox" checked> Registro activo</label>
+<div id="personTelegramPanel" class="item" style="margin:16px 0">
+  <h3 style="margin-top:0">Telegram familiar</h3>
+  <p class="muted">Permisos de mensajes asociados a esta persona.</p>
+  <label class="check">
+    <input id="personTelegramEnabled" type="checkbox" disabled>
+    Permitir enviar mensajes por Telegram a CARE
+  </label>
+  <div class="field">
+    <label>Estado de vinculacion</label>
+    <input id="personTelegramStatus" value="Pendiente de integracion" readonly>
+  </div>
+  <div class="field">
+    <p class="muted" style="font-size:14px">Pedile al familiar que envíe <strong>/vincular</strong> al bot desde su propio Telegram. Después elegí su solicitud y autorizala.</p>
+    <label for="personTelegramRequests" style="font-weight:700">Solicitudes recibidas (duran 15 minutos)</label>
+    <select id="personTelegramRequests" disabled><option value="">Todavía no hay solicitudes</option></select>
+    <button id="personTelegramPair" class="hidden" type="button" disabled>Código alternativo</button>
+    <button id="personTelegramRefresh" type="button" disabled>Consultar solicitudes</button>
+    <button id="personTelegramApprove" type="button" disabled>Autorizar cuenta seleccionada</button>
+    <button id="personTelegramRevoke" class="danger small hidden" type="button" disabled>Revocar acceso Telegram</button>
+  </div>
+  <p id="personTelegramInfo" class="muted">El familiar escribe /vincular al bot. Vos aprobás la solicitud.</p>
+</div>
             <div class="actions"><button class="primary" type="submit">Guardar</button><button id="personCancel" class="secondary" type="button">Cancelar</button></div>
           </form>
         </div>
@@ -522,7 +670,7 @@ button,input,textarea,select{font:inherit}button{cursor:pointer}.shell{max-width
             <div class="field"><label>Relación *</label><select id="familyType"><option value="child">es hijo/a de</option><option value="parent">es padre/madre de</option><option value="spouse">es pareja/esposo/a de</option><option value="sibling">es hermano/a de</option><option value="grandchild">es nieto/a de</option><option value="grandparent">es abuelo/a de</option><option value="in_law">es familiar político de</option><option value="caregiver">cuida o acompaña a</option><option value="other">otra relación con</option></select></div>
             <div class="field"><label>Persona relacionada o usuaria *</label><select id="familyTo" required></select></div>
             <div class="field"><label>Etiqueta visible</label><input id="familyLabel" maxlength="48" placeholder="hija, esposa, nieta, nuera..."></div>
-            <div class="field"><label>Notas privadas de administración</label><textarea id="familyNotes" maxlength="256" placeholder="Ej.: Martina es hija de Ale y Aldana."></textarea></div>
+            <div class="field"><label>Notas privadas de administración</label><textarea id="familyNotes" maxlength="256" placeholder="Ej.: Persona de ejemplo E es hija de Ale y Persona de ejemplo D."></textarea></div>
             <label class="check"><input id="familyEnabled" type="checkbox" checked> Relación activa</label>
             <div class="actions"><button class="primary" type="submit">Guardar relación</button><button id="familyCancel" class="secondary" type="button">Cancelar</button></div>
           </form>
@@ -943,6 +1091,69 @@ button,input,textarea,select{font:inherit}button{cursor:pointer}.shell{max-width
     </section>
 
 
+    <section id="section-homeassistant" class="section">
+      <div class="haHero">
+        <div>
+          <h2 style="margin:0">Home Assistant</h2>
+          <div class="muted" style="margin-top:5px">Sensores y estado de la casa conectados a XiaoZhi Care.</div>
+        </div>
+        <span id="haConnectionState" class="haState">
+          <span class="haDot"></span>
+          <span id="haConnectionText">Sin consultar</span>
+        </span>
+      </div>
+
+      <div class="haCards">
+        <div class="card">
+          <div class="panelTitle"><h2>Ambiente interior · Comedor</h2><span id="haIndoorStatus" class="counter">--</span></div>
+          <div class="haMetricGrid">
+            <div class="haMetric"><div class="haMetricLabel">Temperatura</div><div id="haIndoorTemperature" class="haMetricValue">--</div></div>
+            <div class="haMetric"><div class="haMetricLabel">Humedad</div><div id="haIndoorHumidity" class="haMetricValue">--</div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="panelTitle"><h2>Clima exterior</h2><span id="haWeatherStatus" class="counter">--</span></div>
+          <div class="haMetricGrid">
+            <div class="haMetric"><div class="haMetricLabel">Temperatura</div><div id="haOutdoorTemperature" class="haMetricValue">--</div></div>
+            <div class="haMetric"><div class="haMetricLabel">Humedad</div><div id="haOutdoorHumidity" class="haMetricValue">--</div></div>
+          </div>
+          <div id="haOutdoorCondition" class="haCondition">Estado: --</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:18px">
+        <div class="haEntityHead">
+          <div>
+            <h2 style="margin:0">Dispositivos detectados</h2>
+            <div class="muted" style="margin-top:4px">Entidades útiles descubiertas automáticamente en Home Assistant.</div>
+          </div>
+          <div class="actions">
+            <label class="haTechToggle">
+              <input id="haShowTechnical" type="checkbox">
+              Mostrar técnicas
+            </label>
+            <span id="haEntitiesCount" class="counter">Sin consultar</span>
+            <button id="haSaveAllowedBtn" class="secondary" type="button">Guardar permisos</button>
+            <button id="haDiscoverBtn" class="secondary" type="button">Detectar dispositivos</button>
+          </div>
+        </div>
+        <div id="haEntitiesList" class="haEntityGroups">
+          <div class="empty" style="grid-column:1/-1">Pulsá “Detectar dispositivos” para importar las entidades de Home Assistant.</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:18px">
+        <div class="panelTitle"><h2>Conexión</h2></div>
+        <p class="muted">CARE consulta Home Assistant dentro de la red local. El token de acceso nunca se envía al navegador.</p>
+        <div class="actions">
+          <button id="haRefreshBtn" class="primary" type="button">Actualizar</button>
+          <button id="haTestBtn" class="secondary" type="button">Probar conexión</button>
+        </div>
+      </div>
+    </section>
+
+
     <section id="section-maintenance" class="section">
       <div class="notice">Herramientas de mantenimiento para pruebas. No borra WiFi ni configuración de XiaoZhi. Usar con cuidado.</div>
       <div class="grid">
@@ -1020,6 +1231,8 @@ button,input,textarea,select{font:inherit}button{cursor:pointer}.shell{max-width
             <button id="fullBackupRestore" class="danger" type="button">Restaurar backup</button>
           </div>
           <p class="muted">La restauración reemplaza los datos actuales de Care por los del archivo. No restaura audios, WiFi ni configuración de XiaoZhi.</p>
+          <button id="fullBackupCheck" class="secondary" type="button">Consultar estado de restauración</button>
+          <button id="fullBackupRevert" class="secondary" type="button">Volver a la copia anterior</button>
           <div id="fullBackupStatus" class="itemNotes" style="margin-top:14px"></div>
         </div>
       </div>
@@ -1144,6 +1357,427 @@ function hideAll(){for(const id of ['setupView','loginView','appView'])$(id).cla
 function showSetup(){resetPasswordVisibility();hideAll();$('setupView').classList.remove('hidden');$('status').textContent='Configurar seguridad';setTimeout(()=>$('setupPassword').focus(),0)}
 function showLogin(){resetPasswordVisibility();hideAll();$('loginView').classList.remove('hidden');$('status').textContent='Bloqueado';$('loginPassword').value='';setTimeout(()=>$('loginPassword').focus(),0)}
 let bloodPressure=[];
+function haConditionText(value){
+  const map={
+    clear_night:'Despejado',
+    cloudy:'Nublado',
+    exceptional:'Condición excepcional',
+    fog:'Niebla',
+    hail:'Granizo',
+    lightning:'Tormenta eléctrica',
+    lightning_rainy:'Tormenta con lluvia',
+    partlycloudy:'Parcialmente nublado',
+    pouring:'Lluvia intensa',
+    rainy:'Lluvia',
+    snowy:'Nieve',
+    snowy_rainy:'Aguanieve',
+    sunny:'Soleado',
+    windy:'Ventoso',
+    windy_variant:'Ventoso y nublado'
+  };
+  return map[value]||value||'--';
+}
+
+function haSetConnection(ok,text){
+  const state=$('haConnectionState');
+  state.classList.remove('ok','bad');
+  if(ok===true)state.classList.add('ok');
+  if(ok===false)state.classList.add('bad');
+  $('haConnectionText').textContent=text;
+}
+
+let haDiscoveredEntities=[];
+let haAllowedEntities=new Set();
+
+function haIsControllable(entity){
+  return [
+    'light','switch','climate','media_player',
+    'remote','cover','fan'
+  ].includes(entity.domain);
+}
+
+function haIsTechnical(entity){
+  const id=String(entity.entity_id||'').toLowerCase();
+  const name=String(entity.friendly_name||'').toLowerCase();
+
+  const technicalSuffixes=[
+    '_freeze',
+    '_sync_send',
+    '_sync_receive',
+    '_reverse',
+    '_nightlight'
+  ];
+
+  if(technicalSuffixes.some(s=>id.endsWith(s)))return true;
+
+  return [
+    'congelar',
+    'envío de sincronización',
+    'envio de sincronizacion',
+    'recepción de sincronización',
+    'recepcion de sincronizacion',
+    'inverso',
+    'luz nocturna'
+  ].some(label=>name.includes(label));
+}
+
+function haDomainTitle(domain){
+  const map={
+    light:'Luces',
+    switch:'Interruptores',
+    climate:'Clima',
+    media_player:'Multimedia',
+    remote:'Controles remotos',
+    cover:'Persianas y cubiertas',
+    fan:'Ventiladores',
+    sensor:'Sensores',
+    weather:'Clima exterior'
+  };
+  return map[domain]||domain;
+}
+
+function renderHomeAssistantEntities(entities){
+  const root=$('haEntitiesList');
+  root.innerHTML='';
+
+  haDiscoveredEntities=Array.isArray(entities)?entities:[];
+
+  const showTechnical=$('haShowTechnical')?.checked===true;
+  const hiddenTechnical=haDiscoveredEntities.filter(haIsTechnical).length;
+
+  const visible=haDiscoveredEntities.filter(entity=>
+    showTechnical || !haIsTechnical(entity)
+  );
+
+  const countText=
+    haDiscoveredEntities.length+' detectadas'+
+    (!showTechnical && hiddenTechnical
+      ? ' · '+hiddenTechnical+' técnicas ocultas'
+      : '');
+
+  $('haEntitiesCount').textContent=countText;
+
+  if(!visible.length){
+    root.innerHTML='<div class="empty" style="grid-column:1/-1">No se encontraron entidades compatibles.</div>';
+    return;
+  }
+
+  const grouped={};
+
+  for(const entity of visible){
+    const domain=entity.domain||'other';
+    if(!grouped[domain])grouped[domain]=[];
+    grouped[domain].push(entity);
+  }
+
+  const preferred=[
+    'light','switch','climate','media_player',
+    'remote','cover','fan','sensor','weather'
+  ];
+
+  for(const domain of preferred){
+    const items=grouped[domain];
+    if(!items||!items.length)continue;
+
+    items.sort((a,b)=>
+      String(a.friendly_name||a.entity_id)
+        .localeCompare(String(b.friendly_name||b.entity_id),'es')
+    );
+
+    const group=document.createElement('div');
+    group.className='haEntityGroup';
+
+    const title=document.createElement('h3');
+    title.textContent=haDomainTitle(domain)+' · '+items.length;
+    group.appendChild(title);
+
+    const list=document.createElement('div');
+    list.className='haEntityList';
+
+    for(const entity of items){
+      const row=document.createElement('div');
+      row.className='haEntityRow';
+
+      const info=document.createElement('div');
+
+      const name=document.createElement('div');
+      name.className='haEntityName';
+      name.textContent=entity.friendly_name||entity.entity_id;
+
+      const id=document.createElement('div');
+      id.className='haEntityId';
+      id.textContent=entity.entity_id;
+
+      info.appendChild(name);
+      info.appendChild(id);
+
+      const right=document.createElement('div');
+      right.style.display='flex';
+      right.style.flexDirection='column';
+      right.style.alignItems='flex-end';
+      right.style.gap='7px';
+
+      const state=document.createElement('div');
+      state.className='haEntityState';
+      state.textContent=entity.state||'--';
+      right.appendChild(state);
+
+      if(haIsControllable(entity)){
+        const label=document.createElement('label');
+        label.className='haAllowControl';
+
+        const checkbox=document.createElement('input');
+        checkbox.type='checkbox';
+        checkbox.className='haAllowEntity';
+        checkbox.dataset.entityId=entity.entity_id;
+        checkbox.checked=haAllowedEntities.has(entity.entity_id);
+
+        checkbox.addEventListener('change',()=>{
+          if(checkbox.checked){
+            haAllowedEntities.add(entity.entity_id);
+          }else{
+            haAllowedEntities.delete(entity.entity_id);
+          }
+        });
+
+        const span=document.createElement('span');
+        span.textContent='Permitir';
+
+        label.appendChild(checkbox);
+        label.appendChild(span);
+        right.appendChild(label);
+      }else{
+        const tag=document.createElement('div');
+        tag.className='haReadOnlyTag';
+        tag.textContent='Solo lectura';
+        right.appendChild(tag);
+      }
+
+      row.appendChild(info);
+      row.appendChild(right);
+      list.appendChild(row);
+    }
+
+    group.appendChild(list);
+    root.appendChild(group);
+  }
+}
+
+function haFriendlyNameFromEntityId(entityId){
+  const raw=String(entityId||'');
+  const dot=raw.indexOf('.');
+  const base=dot>=0?raw.slice(dot+1):raw;
+
+  return base
+    .replace(/_/g,' ')
+    .replace(/\b\w/g,c=>c.toUpperCase());
+}
+
+async function loadHomeAssistantAllowedPreview(){
+  try{
+    const [allowedResponse,namesResponse]=await Promise.all([
+      api('/api/home-assistant/allowed'),
+      api('/api/home-assistant/names')
+    ]);
+
+    const allowedData=allowedResponse.data||{};
+    const namesData=namesResponse.data||{};
+
+    const allowed=Array.isArray(allowedData.entity_ids)
+      ?allowedData.entity_ids
+      :[];
+
+    const savedNames=Array.isArray(namesData.entities)
+      ?namesData.entities
+      :[];
+
+    const nameMap=new Map(
+      savedNames
+        .filter(x=>x&&x.entity_id&&x.friendly_name)
+        .map(x=>[x.entity_id,x.friendly_name])
+    );
+
+    haAllowedEntities=new Set(allowed);
+
+    if(!allowed.length){
+      $('haEntitiesCount').textContent='0 guardadas';
+      $('haEntitiesList').innerHTML=
+        '<div class="empty" style="grid-column:1/-1">No hay dispositivos permitidos guardados. Pulsá “Detectar dispositivos” para elegirlos.</div>';
+      return;
+    }
+
+    const savedEntities=allowed.map(entityId=>{
+      const dot=String(entityId).indexOf('.');
+      const domain=dot>0?String(entityId).slice(0,dot):'';
+
+      return {
+        entity_id:entityId,
+        domain,
+        friendly_name:
+          nameMap.get(entityId)||
+          haFriendlyNameFromEntityId(entityId),
+        state:'guardado'
+      };
+    });
+
+    renderHomeAssistantEntities(savedEntities);
+    $('haEntitiesCount').textContent=
+      allowed.length+' guardadas';
+
+  }catch(e){
+    $('haEntitiesCount').textContent='Sin consultar';
+  }
+}
+
+async function loadHomeAssistantEntities(showMessage=true){
+  $('haEntitiesCount').textContent='Consultando...';
+
+  try{
+    const [entitiesResponse,allowedResponse]=await Promise.all([
+      api('/api/home-assistant/entities'),
+      api('/api/home-assistant/allowed')
+    ]);
+
+    const entityData=entitiesResponse.data||{};
+    const allowedData=allowedResponse.data||{};
+
+    const entities=Array.isArray(entityData.entities)
+      ?entityData.entities
+      :[];
+
+    const allowed=Array.isArray(allowedData.entity_ids)
+      ?allowedData.entity_ids
+      :[];
+
+    haAllowedEntities=new Set(allowed);
+    renderHomeAssistantEntities(entities);
+
+    if(showMessage){
+      showMsg(
+        'Home Assistant: '+entities.length+
+        ' entidades detectadas; '+
+        allowed.length+' permitidas.'
+      );
+    }
+  }catch(e){
+    $('haEntitiesCount').textContent='Error';
+    $('haEntitiesList').innerHTML=
+      '<div class="empty" style="grid-column:1/-1">No se pudieron importar las entidades de Home Assistant.</div>';
+
+    if(showMessage){
+      showMsg(
+        'No se pudieron detectar dispositivos: '+readableError(e.message),
+        'error'
+      );
+    }
+  }
+}
+
+async function saveHomeAssistantAllowed(){
+  const entityIds=[...haAllowedEntities].sort();
+
+  const byId=new Map(
+    (haDiscoveredEntities||[])
+      .filter(x=>x&&x.entity_id)
+      .map(x=>[x.entity_id,x])
+  );
+
+  const names=entityIds
+    .map(entityId=>{
+      const entity=byId.get(entityId);
+      if(!entity)return null;
+
+      const friendlyName=
+        String(entity.friendly_name||'').trim();
+
+      if(!friendlyName)return null;
+
+      return {
+        entity_id:entityId,
+        friendly_name:friendlyName
+      };
+    })
+    .filter(Boolean);
+
+  try{
+    const [permissionsResponse]=await Promise.all([
+      api(
+        '/api/home-assistant/allowed',
+        {
+          method:'PUT',
+          body:{entity_ids:entityIds},
+          csrfRequired:true
+        }
+      ),
+      api(
+        '/api/home-assistant/names',
+        {
+          method:'PUT',
+          body:{entities:names},
+          csrfRequired:true
+        }
+      )
+    ]);
+
+    const count=
+      permissionsResponse?.data?.count??entityIds.length;
+
+    showMsg(
+      'Permisos de Home Assistant guardados: '+
+      count+' dispositivos.'
+    );
+
+    await loadHomeAssistantAllowedPreview();
+  }catch(e){
+    showMsg(
+      'No se pudieron guardar los permisos: '+
+      readableError(e.message),
+      'error'
+    );
+  }
+}
+
+async function loadHomeAssistant(showMessage=false){
+  haSetConnection(null,'Consultando...');
+
+  try{
+    const response=await api('/api/home-assistant/status');
+    const data=response.data||{};
+    const connected=!!data.connected;
+
+    haSetConnection(connected,connected?'Conectado':'Sin conexión');
+
+    $('haIndoorStatus').textContent=data.indoor_available?'Disponible':'No disponible';
+    $('haIndoorTemperature').textContent=data.indoor_available?Number(data.indoor_temperature).toFixed(1).replace('.',',')+' °C':'--';
+    $('haIndoorHumidity').textContent=data.indoor_available?Math.round(Number(data.indoor_humidity))+' %':'--';
+
+    $('haWeatherStatus').textContent=data.weather_available?'Disponible':'No disponible';
+    $('haOutdoorTemperature').textContent=data.weather_available?Number(data.outdoor_temperature).toFixed(1).replace('.',',')+' °C':'--';
+    $('haOutdoorHumidity').textContent=data.weather_available?Math.round(Number(data.outdoor_humidity))+' %':'--';
+    $('haOutdoorCondition').textContent='Estado: '+(data.weather_available?haConditionText(data.outdoor_condition):'--');
+
+    if(showMessage){
+      showMsg(
+        connected?'Home Assistant respondió correctamente.':'CARE no pudo obtener datos de Home Assistant.',
+        connected?'ok':'error'
+      );
+    }
+  }catch(e){
+    haSetConnection(false,'Sin conexión');
+    $('haIndoorStatus').textContent='No disponible';
+    $('haWeatherStatus').textContent='No disponible';
+    $('haIndoorTemperature').textContent='--';
+    $('haIndoorHumidity').textContent='--';
+    $('haOutdoorTemperature').textContent='--';
+    $('haOutdoorHumidity').textContent='--';
+    $('haOutdoorCondition').textContent='Estado: --';
+
+    if(showMessage){
+      showMsg('No se pudo consultar Home Assistant: '+readableError(e.message),'error');
+    }
+  }
+}
+
 async function showApp(){hideAll();$('appView').classList.remove('hidden');if(authEnabled){$('changePasswordBtn').classList.remove('hidden');$('logoutBtn').classList.remove('hidden')}$('status').textContent=authEnabled?'Care listo':'Care listo · DEV sin contraseña';await loadPeople();await loadProfile();await Promise.all([loadPreferences(),loadRoutines(),loadPillbox(),loadReminders(),loadFamily(),loadMaintenance(),loadRecordings(),loadBloodPressure()]);setupPeopleFamilyUi();updatePersonFamilyOptions()}
 async function refreshAuth(){try{const j=await api('/api/auth/state',{redirectOn401:false});const s=j.data||{};authEnabled=s.authentication!==false;if(!s.configured){csrf='';showSetup();return}if(!s.authenticated){csrf='';showLogin();return}csrf=s.csrf||'';await showApp()}catch(e){hideAll();$('status').textContent='Sin conexión';showMsg('No se pudo consultar XiaoZhi Care: '+readableError(e.message),'error')}}
 $('showSetupPassword').addEventListener('change',e=>setPasswordVisibility(['setupPassword','setupConfirm'],e.target.checked));$('showLoginPassword').addEventListener('change',e=>setPasswordVisibility(['loginPassword'],e.target.checked));$('showChangePassword').addEventListener('change',e=>setPasswordVisibility(['currentPassword','newPassword','newPasswordConfirm'],e.target.checked));
@@ -1152,7 +1786,19 @@ $('loginForm').addEventListener('submit',async e=>{e.preventDefault();try{const 
 $('logoutBtn').onclick=async()=>{try{await api('/api/auth/logout',{method:'POST',body:{},csrfRequired:true,redirectOn401:false})}catch(e){}csrf='';showLogin();showMsg('Sesión cerrada.')};
 $('changePasswordBtn').onclick=()=>{$('passwordPanel').classList.toggle('hidden');if(!$('passwordPanel').classList.contains('hidden'))$('currentPassword').focus()};$('cancelPassword').onclick=()=>{$('passwordForm').reset();$('showChangePassword').checked=false;setPasswordVisibility(['currentPassword','newPassword','newPasswordConfirm'],false);$('passwordPanel').classList.add('hidden')};
 $('passwordForm').addEventListener('submit',async e=>{e.preventDefault();const cur=$('currentPassword').value,n=$('newPassword').value,c=$('newPasswordConfirm').value;if(n!==c)return showMsg('Las nuevas contraseñas no coinciden.','error');if(n.length<8)return showMsg('La nueva contraseña debe tener al menos 8 caracteres.','error');try{const j=await api('/api/auth/password',{method:'PUT',body:{current_password:cur,new_password:n},csrfRequired:true});csrf=(j.data&&j.data.csrf)||'';$('passwordForm').reset();$('passwordPanel').classList.add('hidden');showMsg('Contraseña actualizada.')}catch(err){showMsg(readableError(err.message),'error')}});
-for(const b of document.querySelectorAll('.tab'))b.addEventListener('click',()=>{for(const x of document.querySelectorAll('.tab'))x.classList.toggle('active',x===b);for(const s of document.querySelectorAll('.section'))s.classList.toggle('active',s.id==='section-'+b.dataset.tab)});
+for(const b of document.querySelectorAll('.tab'))b.addEventListener('click',()=>{
+  for(const x of document.querySelectorAll('.tab'))x.classList.toggle('active',x===b);
+  for(const s of document.querySelectorAll('.section'))s.classList.toggle('active',s.id==='section-'+b.dataset.tab);
+  if(b.dataset.tab==='homeassistant'){
+    loadHomeAssistant(false);
+    loadHomeAssistantAllowedPreview();
+  }
+});
+$('haRefreshBtn').onclick=()=>loadHomeAssistant(true);
+$('haTestBtn').onclick=()=>loadHomeAssistant(true);
+$('haDiscoverBtn').onclick=()=>loadHomeAssistantEntities(true);
+$('haSaveAllowedBtn').onclick=saveHomeAssistantAllowed;
+$('haShowTechnical').onchange=()=>renderHomeAssistantEntities(haDiscoveredEntities);
 function actionButton(text,kind,fn){const b=document.createElement('button');b.type='button';b.className=kind+' small';b.textContent=text;b.addEventListener('click',fn);return b}
 function empty(container,text){container.textContent='';const e=document.createElement('div');e.className='empty';e.textContent=text;container.appendChild(e)}
 function itemCard(title,meta,notes,onEdit,onDelete){const c=document.createElement('div');c.className='item';const top=document.createElement('div');top.className='itemTop';const info=document.createElement('div');const n=document.createElement('div');n.className='itemName';n.textContent=title;const m=document.createElement('div');m.className='itemMeta';m.textContent=meta;info.append(n,m);const acts=document.createElement('div');acts.className='actions';acts.append(actionButton('Editar','secondary',onEdit),actionButton('Eliminar','danger',onDelete));top.append(info,acts);c.appendChild(top);if(notes){const q=document.createElement('div');q.className='itemNotes';q.textContent=notes;c.appendChild(q)}return c}
@@ -1180,7 +1826,7 @@ function reminderNumber(id){return humanNumber(reminders,id,'Recordatorio')}
 function familyNumber(id){return humanNumber(family,id,'Relación')}
 const PROFILE_ID='profile';
 let editingPersonId='';
-function profileDisplayName(){return (profile.nickname||profile.name||'Yolita').trim()||'Yolita'}
+function profileDisplayName(){return (profile.nickname||profile.name||'persona principal').trim()||'persona principal'}
 function profileOptionText(){return 'Usuaria principal · '+profileDisplayName()}
 function familyParticipantOptions(){const opts=[{id:PROFILE_ID,text:profileOptionText()}];for(const p of people)opts.push({id:p.id,text:personTitle(p)});return opts}
 function personNameById(id){if(id===PROFILE_ID)return profileDisplayName();const p=people.find(x=>x.id===id);return p?(p.name+(p.nickname?' · '+p.nickname:'')):'Persona no encontrada'}
@@ -1234,7 +1880,7 @@ function setupPeopleFamilyUi(){
     box.style.margin='14px 0';
     box.innerHTML=
       '<div class="panelTitle"><h3>Vínculos adicionales</h3></div>'+
-      '<p class="muted">Carga hasta tres vínculos adicionales con otras personas. La relación directa con Yoli ya se carga arriba en el campo Relación.</p>'+
+      '<p class="muted">Carga hasta tres vínculos adicionales con otras personas. La relación directa con persona principal ya se carga arriba en el campo Relación.</p>'+
       '<div class="row">'+
         '<div class="field"><label>Es</label><select id="personFamilyType"><option value="">Sin vínculo</option><option value="child">hijo/a</option><option value="parent">madre/padre</option><option value="spouse">esposa/esposo</option><option value="partner">pareja</option><option value="sibling">hermano/a</option><option value="grandchild">nieto/a</option><option value="grandparent">abuelo/a</option><option value="aunt_uncle">tía/tío</option><option value="niece_nephew">sobrino/a</option><option value="daughter_in_law">nuera</option><option value="son_in_law">yerno</option><option value="in_law">familiar político</option><option value="caregiver">cuidador/a</option><option value="friend">amigo/a</option><option value="neighbor">vecino/a</option><option value="other">otro vínculo</option></select></div>'+
         '<div class="field"><label>de</label><select id="personFamilyRelated"><option value="">Seleccionar persona</option></select></div>'+
@@ -1247,7 +1893,7 @@ function setupPeopleFamilyUi(){
         '<div class="field"><label>También es</label><select id="personFamilyType3"><option value="">Sin vínculo</option><option value="child">hijo/a</option><option value="parent">madre/padre</option><option value="spouse">esposa/esposo</option><option value="partner">pareja</option><option value="sibling">hermano/a</option><option value="grandchild">nieto/a</option><option value="grandparent">abuelo/a</option><option value="aunt_uncle">tía/tío</option><option value="niece_nephew">sobrino/a</option><option value="daughter_in_law">nuera</option><option value="son_in_law">yerno</option><option value="in_law">familiar político</option><option value="caregiver">cuidador/a</option><option value="friend">amigo/a</option><option value="neighbor">vecino/a</option><option value="other">otro vínculo</option></select></div>'+
         '<div class="field"><label>de</label><select id="personFamilyRelated3"><option value="">Seleccionar persona</option></select></div>'+
       '</div>'+
-      '<p class="muted">Ejemplo: Marcelo ya figura como hijo de Yoli arriba; acá cargá solo pareja de Miriam y hermano de Alejandra.</p>';
+      '<p class="muted">Ejemplo: Persona de ejemplo A ya figura como hijo de persona principal arriba; acá cargá solo pareja de Persona de ejemplo C y hermano de Persona de ejemplo B.</p>';
 
     form.insertBefore(box,anchor);
     updatePersonFamilyOptions();
@@ -1264,7 +1910,7 @@ function updatePersonFamilyOptions(currentId=''){
 
   // U2-r6-r5:
   // En estos vinculos NO se incluye la usuaria principal.
-  // La relacion con Yoli se carga arriba en el campo "Relacion".
+  // La relacion con persona principal se carga arriba en el campo "Relacion".
   const opts=(people||[])
     .filter(p=>p.enabled!==false)
     .filter(p=>p.id!==currentId)
@@ -1479,9 +2125,95 @@ function personFamilySummary(id){
 }
 
 // Personas
+// DP-TG-V2.45: estado real y revocacion; nunca crea ni concede permisos.
+function clearPersonTelegram(){
+  $('personTelegramEnabled').checked=false;
+  $('personTelegramEnabled').disabled=true;
+  $('personTelegramStatus').value='Selecciona una persona guardada';
+  for(const k of ['Pair','Refresh','Approve'])$('personTelegram'+k).disabled=true;
+  $('personTelegramRevoke').disabled=true;
+  $('personTelegramRevoke').classList.add('hidden');
+  $('personTelegramInfo').textContent='El familiar escribe /vincular al bot. La autorización requiere tu aprobación.';
+  $('personTelegramRequests').disabled=true;
+  $('personTelegramRequests').textContent='';
+  const opt=document.createElement('option');opt.value='';opt.textContent='Todavía no hay solicitudes';
+  $('personTelegramRequests').appendChild(opt);
+}
+async function loadPersonTelegram(id){
+  clearPersonTelegram();
+  $('personTelegramStatus').value='Consultando vinculacion...';
+  try{
+    const j=await api('/api/telegram/people/'+encodeURIComponent(id));
+    if(editingPersonId!==id)return; // evita respuesta tardia de otra ficha
+    const d=j.data||{};
+    const states={unlinked:'Sin vincular',pending:'Pendiente',authorized:'Vinculado',revoked:'Revocada'};
+    $('personTelegramStatus').value=states[d.status]||'Estado desconocido';
+    $('personTelegramPair').disabled=true; // codigo legacy oculto en R4
+    $('personTelegramRefresh').disabled=false;
+    $('personTelegramEnabled').checked=d.effective_authorized===true;
+    const select=$('personTelegramRequests');
+    select.textContent='';
+    const requests=Array.isArray(d.requests)?d.requests:[];
+    const placeholder=document.createElement('option');
+    placeholder.value='';placeholder.textContent=requests.length?'Elegí la solicitud del familiar':'Todavía no hay solicitudes';
+    select.appendChild(placeholder);
+    for(const r of requests){
+      const option=document.createElement('option');
+      option.value=r.id;
+      option.textContent=(r.name||'Cuenta de Telegram')+(r.username?' (@'+r.username+')':'')+' · ID '+r.account;
+      select.appendChild(option);
+    }
+    select.disabled=d.person_enabled!==true||d.effective_authorized===true||!requests.length;
+    $('personTelegramApprove').disabled=true; // elegir explicitamente para evitar aprobacion accidental
+    select.onchange=()=>{$('personTelegramApprove').disabled=!select.value||d.person_enabled!==true||d.effective_authorized===true;};
+    const revocable=d.linked===true&&d.status!=='revoked';
+    $('personTelegramRevoke').disabled=!revocable;
+    $('personTelegramRevoke').classList.toggle('hidden',!revocable);
+    $('personTelegramInfo').textContent=d.effective_authorized===true
+      ?'Cuenta autorizada. Podés revocar el permiso cuando quieras.'
+      :(requests.length?'Elegí la solicitud correcta. Comprobá quién la envió antes de autorizar.':
+        'Esperando /vincular del familiar. Presioná Consultar solicitudes luego del envío.');
+  }catch(e){
+    if(editingPersonId!==id)return;
+    $('personTelegramStatus').value='Error al consultar vinculo';
+    $('personTelegramInfo').textContent='No fue posible verificar el estado. No se conceden permisos.';
+    showMsg('Telegram: '+readableError(e.message),'error');
+  }
+}
+$('personTelegramRefresh').addEventListener('click',()=>{if(editingPersonId)loadPersonTelegram(editingPersonId)});
+$('personTelegramApprove').addEventListener('click',async()=>{
+  const id=editingPersonId, select=$('personTelegramRequests');
+  const requestId=select.value;
+  if(!id||!requestId)return;
+  const label=select.options[select.selectedIndex]?.textContent||'esta cuenta';
+  if(!confirm('¿Confirmás que '+label+' corresponde a '+personNameById(id)+'?\n\nSolo esa cuenta podrá enviar mensajes a CARE.'))return;
+  $('personTelegramApprove').disabled=true;
+  try{
+    await api('/api/telegram/people/'+encodeURIComponent(id),{
+      method:'POST',body:{approve:true,request_id:requestId},csrfRequired:true});
+    if(editingPersonId===id){await loadPersonTelegram(id);showMsg('Cuenta Telegram autorizada');}
+  }catch(e){
+    if(editingPersonId===id)await loadPersonTelegram(id);
+    showMsg('Telegram: '+readableError(e.message),'error');
+  }
+});
+$('personTelegramRevoke').addEventListener('click',async()=>{
+  const id=editingPersonId;
+  if(!id||!confirm('Revocar el acceso Telegram de esta persona?'))return;
+  const btn=$('personTelegramRevoke');
+  btn.disabled=true;
+  try{
+    await api('/api/telegram/people/'+encodeURIComponent(id),{method:'DELETE',csrfRequired:true});
+    if(editingPersonId===id){await loadPersonTelegram(id);showMsg('Acceso Telegram revocado');}
+  }catch(e){
+    if(editingPersonId===id)await loadPersonTelegram(id);
+    showMsg('No se pudo confirmar revocacion: '+readableError(e.message),'error');
+  }
+});
+
 function personPayload(){const current=people.find(x=>x.id===(editingPersonId||$('personId').value||''));return{name:$('personName').value.trim(),nickname:$('personNickname').value.trim(),relationship:$('personRelationship').value.trim(),phone:$('personPhone').value.trim(),address:$('personAddress').value.trim(),birthday:$('personBirthday').value,has_pet:$('personHasPet')?$('personHasPet').checked:!!(current&&current.has_pet),pet_type:$('personPetType')?$('personPetType').value:((current&&current.pet_type)||''),pet_name:$('personPetName')?$('personPetName').value.trim():((current&&current.pet_name)||''),aliases:$('personAliases').value.split(',').map(x=>x.trim()).filter(Boolean).slice(0,8),notes:$('personNotes').value.trim(),enabled:$('personEnabled').checked}}
-function resetPerson(){editingPersonId='';$('personForm').reset();$('personId').value='';if($('personHasPet'))$('personHasPet').checked=false;if($('personPetType'))$('personPetType').value='';if($('personPetName'))$('personPetName').value='';$('personEnabled').checked=true;$('personFormTitle').textContent='Agregar persona';clearPersonFamilyFields();updatePersonFamilyOptions();const btn=$('personForm').querySelector('button.primary');if(btn)btn.textContent='Guardar'}
-async function editPerson(id){let p=people.find(x=>x.id===id);try{const j=await api('/api/people/'+id);if(j&&j.data)p=j.data}catch(e){}if(!p)return;editingPersonId=p.id||id;$('personId').value=editingPersonId;$('personName').value=p.name||'';$('personNickname').value=p.nickname||'';$('personRelationship').value=p.relationship||'';$('personPhone').value=p.phone||'';$('personAddress').value=p.address||'';$('personBirthday').value=p.birthday||'';if($('personHasPet'))$('personHasPet').checked=p.has_pet===true;if($('personPetType'))$('personPetType').value=p.pet_type||'';if($('personPetName'))$('personPetName').value=p.pet_name||'';const aliases=Array.isArray(p.aliases)?p.aliases:(typeof p.aliases==='string'?p.aliases.split(','):[]);$('personAliases').value=aliases.map(x=>String(x).trim()).filter(Boolean).join(', ');$('personNotes').value=p.notes||'';$('personEnabled').checked=p.enabled!==false;$('personFormTitle').textContent='Editar '+personNumber(editingPersonId);const btn=$('personForm').querySelector('button.primary');if(btn)btn.textContent='Actualizar persona';fillPersonFamilyFields(editingPersonId);window.scrollTo({top:0,behavior:'smooth'})}
+function resetPerson(){editingPersonId='';clearPersonTelegram();$('personForm').reset();$('personId').value='';if($('personHasPet'))$('personHasPet').checked=false;if($('personPetType'))$('personPetType').value='';if($('personPetName'))$('personPetName').value='';$('personEnabled').checked=true;$('personFormTitle').textContent='Agregar persona';clearPersonFamilyFields();updatePersonFamilyOptions();const btn=$('personForm').querySelector('button.primary');if(btn)btn.textContent='Guardar'}
+async function editPerson(id){let p=people.find(x=>x.id===id);try{const j=await api('/api/people/'+id);if(j&&j.data)p=j.data}catch(e){}if(!p)return;editingPersonId=p.id||id;$('personId').value=editingPersonId;$('personName').value=p.name||'';$('personNickname').value=p.nickname||'';$('personRelationship').value=p.relationship||'';$('personPhone').value=p.phone||'';$('personAddress').value=p.address||'';$('personBirthday').value=p.birthday||'';if($('personHasPet'))$('personHasPet').checked=p.has_pet===true;if($('personPetType'))$('personPetType').value=p.pet_type||'';if($('personPetName'))$('personPetName').value=p.pet_name||'';const aliases=Array.isArray(p.aliases)?p.aliases:(typeof p.aliases==='string'?p.aliases.split(','):[]);$('personAliases').value=aliases.map(x=>String(x).trim()).filter(Boolean).join(', ');$('personNotes').value=p.notes||'';$('personEnabled').checked=p.enabled!==false;$('personFormTitle').textContent='Editar '+personNumber(editingPersonId);const btn=$('personForm').querySelector('button.primary');if(btn)btn.textContent='Actualizar persona';fillPersonFamilyFields(editingPersonId);loadPersonTelegram(editingPersonId);window.scrollTo({top:0,behavior:'smooth'})}
 async function removePerson(id){const p=people.find(x=>x.id===id);if(!confirm('¿Eliminar '+(p?personTitle(p):'persona')+'?'))return;try{await api('/api/people/'+id,{method:'DELETE',csrfRequired:true});showMsg('Persona eliminada');resetPerson();await loadPeople();await loadReminders()}catch(e){showMsg(readableError(e.message),'error')}}
 function prefsForPerson(id){return preferences.filter(x=>(x.owner_id||'profile')===id)}
 function personCard(p){const c=document.createElement('div');c.className='item';const top=document.createElement('div');top.className='itemTop';const info=document.createElement('div');const n=document.createElement('div');n.className='itemName';n.textContent=p.name+(p.nickname?' · '+p.nickname:'');const m=document.createElement('div');m.className='itemMeta';m.textContent=[personNumber(p.id),p.relationship,p.enabled===false?'inactivo':''].filter(Boolean).join(' · ');info.append(n,m);const pp=prefsForPerson(p.id);const active=pp.filter(x=>x.enabled!==false);const sum=document.createElement('div');sum.className='prefSummary';sum.textContent=active.length?(active.length+' '+(active.length===1?'preferencia':'preferencias')+': '+active.slice(0,3).map(x=>x.value).join(' · ')+(active.length>3?' · ...':'')):'Sin preferencias registradas';info.appendChild(sum);const famSummary=personFamilySummary(p.id);if(famSummary){const fs=document.createElement('div');fs.className='itemNotes';fs.textContent='Vínculos adicionales: '+famSummary;info.appendChild(fs)}const acts=document.createElement('div');acts.className='actions';acts.append(actionButton('Editar datos','secondary',()=>editPerson(p.id)),actionButton('Preferencias','primary',()=>openPersonPreferences(p.id)),actionButton('Eliminar','danger',()=>removePerson(p.id)));top.append(info,acts);c.appendChild(top);if(p.notes){const q=document.createElement('div');q.className='itemNotes';q.textContent=p.notes;c.appendChild(q)}return c}
@@ -2659,28 +3391,52 @@ function downloadJsonFile(filename,obj){
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 
+// DP046_RADIOS_BACKUP_V2 - emisoras y orden, compatible con backups V1.
+function dp046RadioPayload(raw){
+  if(!raw||typeof raw!=='object'||Array.isArray(raw))throw new Error('Radios: bloque inválido.');
+  if(!Array.isArray(raw.items)||raw.items.length<1||raw.items.length>10)
+    throw new Error('Radios: debe haber entre 1 y 10 emisoras.');
+  const encoder=new TextEncoder();
+  const items=raw.items.map((s,i)=>{
+    if(!s||typeof s!=='object'||Array.isArray(s)||typeof s.name!=='string'||typeof s.url!=='string')
+      throw new Error('Radios: emisora '+(i+1)+' inválida.');
+    if(!s.name.trim()||encoder.encode(s.name).length>95)
+      throw new Error('Radios: nombre inválido en emisora '+(i+1)+'.');
+    const ulen=encoder.encode(s.url).length;
+    if(ulen<8||ulen>511||!/^https?:\/\//.test(s.url))
+      throw new Error('Radios: URL inválida en emisora '+(i+1)+'.');
+    return {name:s.name,url:s.url};
+  });
+  const idx=raw.default_index;
+  if(!Number.isInteger(idx)||idx<0||idx>=items.length)
+    throw new Error('Radios: emisora predeterminada inválida.');
+  return {items:items,default_index:idx};
+}
+
 async function downloadFullBackup(){
   const st=$('fullBackupStatus');
-  if(st)st.textContent='Preparando backup completo...';
+  if(st)st.textContent='Preparando backup completo (incluye radios)...';
   try{
-    const [profileRes,peopleRes,preferencesRes,familyRes,remindersRes,routinesRes,pillboxRes]=await Promise.all([
+    const [profileRes,peopleRes,preferencesRes,familyRes,remindersRes,routinesRes,pillboxRes,radioRes]=await Promise.all([
       api('/api/profile'),
       api('/api/people'),
       api('/api/preferences'),
       api('/api/family'),
       api('/api/reminders'),
       api('/api/routines'),
-      api('/api/pillbox')
+      api('/api/pillbox'),
+      api('/api/maintenance/radio-stations')
     ]);
+    const radio=dp046RadioPayload(radioRes.data);
     const now=new Date();
     const stamp=now.toISOString().replace(/[:.]/g,'-');
     const backup={
       schema:'xiaozhi-care-backup',
-      version:1,
+      version:2,
       created_at:now.toISOString(),
       app:'XiaoZhi Care',
       source:'web-panel',
-      includes:['profile','people','preferences','family','reminders','routines','legacy_pillbox'],
+      includes:['profile','people','preferences','family','reminders','routines','legacy_pillbox','radio_stations'],
       data:{
         profile:profileRes.data||{},
         people:peopleRes.data||[],
@@ -2688,24 +3444,25 @@ async function downloadFullBackup(){
         family:familyRes.data||[],
         reminders:remindersRes.data||[],
         routines:routinesRes.data||[],
-        legacy_pillbox:pillboxRes.data||[]
+        legacy_pillbox:pillboxRes.data||[],
+        radio_stations:radio
       }
     };
     downloadJsonFile('xiaozhi-care-backup-'+stamp+'.json',backup);
-    if(st)st.textContent='Backup completo descargado correctamente.';
-    showMsg('Backup completo descargado');
+    if(st)st.textContent='Backup completo V2 descargado, incluidas '+radio.items.length+' emisoras.';
+    showMsg('Backup completo V2 descargado con radios');
   }catch(e){
     if(st)st.textContent='No se pudo descargar el backup: '+readableError(e.message);
     showMsg('No se pudo descargar el backup: '+readableError(e.message),'error');
   }
 }
-
 let selectedFullBackup=null;
 
 function getBackupDataObject(raw){
-  if(!raw||typeof raw!=='object')throw new Error('El archivo no contiene un JSON válido.');
+  if(!raw||typeof raw!=='object'||Array.isArray(raw))throw new Error('El archivo no contiene un JSON válido.');
   if(raw.schema!=='xiaozhi-care-backup')throw new Error('El archivo no parece ser un backup de XiaoZhi Care.');
-  if(!raw.data||typeof raw.data!=='object')throw new Error('El backup no contiene el bloque data.');
+  if(raw.version!==1&&raw.version!==2)throw new Error('Versión de backup no admitida (solo V1 o V2).');
+  if(!raw.data||typeof raw.data!=='object'||Array.isArray(raw.data))throw new Error('El backup no contiene el bloque data.');
   const d=raw.data;
   const required=['profile','people','preferences','family','reminders','routines'];
   for(const k of required){
@@ -2716,23 +3473,33 @@ function getBackupDataObject(raw){
   if(!Array.isArray(d.family))throw new Error('family debe ser una lista.');
   if(!Array.isArray(d.reminders))throw new Error('reminders debe ser una lista.');
   if(!Array.isArray(d.routines))throw new Error('routines debe ser una lista.');
+  if(raw.version===2){
+    if(!Array.isArray(raw.includes)||!raw.includes.includes('radio_stations'))
+      throw new Error('El backup V2 no declara la sección de radios.');
+    d.radio_stations=dp046RadioPayload(d.radio_stations);
+  }else{
+    // Los backups V1 no modifican las radios actualmente guardadas.
+    delete d.radio_stations;
+  }
   return d;
 }
-
 function backupSummaryText(d){
-  return 'Backup válido.\n'+
+  return 'Estructura del backup reconocida; CARE valida los registros al preparar.\n'+
     'Perfil: '+((d.profile&&d.profile.name)?d.profile.name:'sin nombre')+'\n'+
     'Personas: '+d.people.length+'\n'+
     'Preferencias: '+d.preferences.length+'\n'+
     'Familia / vínculos: '+d.family.length+'\n'+
     'Recordatorios: '+d.reminders.length+'\n'+
+    (Array.isArray(d.legacy_pillbox)?'Pastillero legado: '+d.legacy_pillbox.length+' entradas.\n':'Pastillero legado: no incluido; se conservará el actual.\n')+
     'Rutinas / pastillero / cuidados: '+d.routines.length+'\n'+
+    (d.radio_stations?'Emisoras de radio: '+d.radio_stations.items.length+' (incluye predeterminada).\n':
+      'Radios: no incluidas (se conservarán las actuales).\n')+
     'Audios: no se restauran en esta versión.';
 }
-
 async function readSelectedFullBackup(){
   const input=$('fullBackupFile');
   if(!input||!input.files||!input.files[0])throw new Error('Seleccioná un archivo JSON de backup.');
+  if(input.files[0].size>65536)throw new Error('El respaldo supera el máximo de 64 KiB de esta variante.');
   const txt=await input.files[0].text();
   const raw=JSON.parse(txt);
   const data=getBackupDataObject(raw);
@@ -2753,111 +3520,39 @@ async function validateFullBackup(){
   }
 }
 
-async function deleteListById(endpoint,items){
-  for(const item of items){
-    if(item&&item.id){
-      await api(endpoint+'/'+encodeURIComponent(item.id),{method:'DELETE',csrfRequired:true});
-    }
-  }
+let restoreInProgress=false;
+function renderRestoreStatus(state){
+  const el=$('fullBackupStatus');
+  if(!el)return;
+  el.textContent=state.pending
+    ? 'Copia verificada y preparada. Los datos anteriores siguen activos. Reiniciá CARE cuando sea seguro y verificá el estado. No edites datos antes de decidir.'
+    : 'Generación activa: '+state.active+'. No hay una restauración pendiente.';
 }
-
-function cloneWithoutId(obj){
-  const out=Object.assign({},obj||{});
-  delete out.id;
-  return out;
+async function checkRestoreStatus(){
+  try{renderRestoreStatus((await api('/api/restore')).data)}
+  catch(e){showMsg('No se pudo verificar el estado: '+readableError(e.message),'error')}
 }
-
-function mapOwnerId(id,personMap){
-  if(!id)return id;
-  if(id==='profile')return 'profile';
-  return personMap[id]||id;
+async function revertRestore(){
+  if(restoreInProgress||!confirm('¿Volver a la generación anterior? Los datos activos no cambian hasta reiniciar.'))return;
+  restoreInProgress=true;
+  try{renderRestoreStatus((await api('/api/restore/revert',{method:'POST',csrfRequired:true})).data)}
+  catch(e){showMsg('No se confirmó la reversión. Consultá el estado antes de reintentar.','error')}
+  finally{restoreInProgress=false}
 }
-
 async function restoreFullBackup(){
+  if(restoreInProgress)return;
+  restoreInProgress=true;
   const st=$('fullBackupStatus');
   try{
-    const data=selectedFullBackup?selectedFullBackup.data:await readSelectedFullBackup();
-
-    const msg=backupSummaryText(data)+'\n\nEsta acción reemplazará los datos actuales de XiaoZhi Care. No restaura audios. ¿Continuar?';
-    if(!confirm(msg))return;
-
-    if(st)st.textContent='Restaurando backup... No cierres esta página.';
-
-    const current=await Promise.all([
-      api('/api/family'),
-      api('/api/reminders'),
-      api('/api/routines'),
-      api('/api/pillbox'),
-      api('/api/preferences'),
-      api('/api/people')
-    ]);
-
-    const curFamily=current[0].data||[];
-    const curReminders=current[1].data||[];
-    const curRoutines=current[2].data||[];
-    const curPillbox=current[3].data||[];
-    const curPreferences=current[4].data||[];
-    const curPeople=current[5].data||[];
-
-    if(st)st.textContent='Borrando datos actuales...';
-
-    await deleteListById('/api/family',curFamily);
-    await deleteListById('/api/reminders',curReminders);
-    await deleteListById('/api/routines',curRoutines);
-    await deleteListById('/api/pillbox',curPillbox);
-    await deleteListById('/api/preferences',curPreferences);
-    await deleteListById('/api/people',curPeople);
-
-    if(st)st.textContent='Restaurando perfil...';
-    if(data.profile&&data.profile.name){
-      await api('/api/profile',{method:'PUT',body:cloneWithoutId(data.profile),csrfRequired:true});
-    }
-
-    const personMap={};
-
-    if(st)st.textContent='Restaurando personas...';
-    for(const p of data.people){
-      const created=await api('/api/people',{method:'POST',body:cloneWithoutId(p),csrfRequired:true});
-      if(p.id&&created&&created.data&&created.data.id)personMap[p.id]=created.data.id;
-    }
-
-    if(st)st.textContent='Restaurando preferencias...';
-    for(const pref of data.preferences){
-      const body=cloneWithoutId(pref);
-      body.owner_id=mapOwnerId(body.owner_id,personMap);
-      await api('/api/preferences',{method:'POST',body,csrfRequired:true});
-    }
-
-    if(st)st.textContent='Restaurando familia y vínculos...';
-    for(const f of data.family){
-      const body=cloneWithoutId(f);
-      body.from_person_id=mapOwnerId(body.from_person_id,personMap);
-      body.to_person_id=mapOwnerId(body.to_person_id,personMap);
-      await api('/api/family',{method:'POST',body,csrfRequired:true});
-    }
-
-    if(st)st.textContent='Restaurando rutinas, pastillero y cuidados...';
-    for(const r of data.routines){
-      await api('/api/routines',{method:'POST',body:cloneWithoutId(r),csrfRequired:true});
-    }
-
-    if(st)st.textContent='Restaurando recordatorios...';
-    for(const r of data.reminders){
-      const body=cloneWithoutId(r);
-      body.related_person_id=mapOwnerId(body.related_person_id,personMap);
-      await api('/api/reminders',{method:'POST',body,csrfRequired:true});
-    }
-
-    await Promise.all([loadPeople(),loadProfile(),loadPreferences(),loadRoutines(),loadPillbox(),loadReminders(),loadFamily(),loadMaintenance(),loadRecordings()]);
-    setupPeopleFamilyUi();
-    updatePersonFamilyOptions();
-
-    if(st)st.textContent='Backup restaurado correctamente. Audios no restaurados.';
-    showMsg('Backup restaurado correctamente');
+    const data=await readSelectedFullBackup();
+    if(!confirm(backupSummaryText(data)+'\n\nSe preparará una copia separada. Reemplazará los datos indicados después de reiniciar manualmente. Usá un respaldo de este equipo; los audios y el historial no se importan. ¿Continuar?'))return;
+    if(st)st.textContent='Preparando y verificando una copia separada...';
+    const reply=await api('/api/restore',{method:'POST',body:selectedFullBackup.raw,csrfRequired:true});
+    renderRestoreStatus(reply.data);
   }catch(e){
-    if(st)st.textContent='Error al restaurar backup: '+readableError(e.message);
-    showMsg('Error al restaurar backup: '+readableError(e.message),'error');
-  }
+    if(st)st.textContent='No se recibió confirmación: '+readableError(e.message)+'. Consultá el estado antes de reintentar.';
+    showMsg('Restauración sin confirmación. Consultá el estado.','error');
+  }finally{restoreInProgress=false}
 }
 async function clearExecutions(){if(!confirm('¿Borrar el historial de cosas hechas/confirmadas? No borra las cosas para hacer.'))return;try{const j=await api('/api/maintenance/clear-executions',{method:'POST',body:{confirm:true},csrfRequired:true});showMsg('Historial borrado: '+((j.data&&j.data.deleted)||0)+' evento(s)');await loadMaintenance()}catch(e){showMsg(readableError(e.message),'error')}}
 async function clearLegacyPillbox(){if(!confirm('¿Borrar entradas viejas del pastillero legacy? No borra medicaciones cargadas en Pastillero.'))return;try{const j=await api('/api/maintenance/clear-legacy-pillbox',{method:'POST',body:{confirm:true},csrfRequired:true});showMsg('Pastillero legacy borrado: '+((j.data&&j.data.deleted)||0)+' entrada(s)');await loadMaintenance()}catch(e){showMsg(readableError(e.message),'error')}}
@@ -2874,6 +3569,8 @@ if($('maintenanceRefresh'))$('maintenanceRefresh').onclick=loadMaintenance;
 if($('fullBackupDownload'))$('fullBackupDownload').onclick=downloadFullBackup;
 if($('fullBackupValidate'))$('fullBackupValidate').onclick=validateFullBackup;
 if($('fullBackupRestore'))$('fullBackupRestore').onclick=restoreFullBackup;
+if($('fullBackupCheck'))$('fullBackupCheck').onclick=checkRestoreStatus;
+if($('fullBackupRevert'))$('fullBackupRevert').onclick=revertRestore;
 if($('clearExecutionsBtn'))$('clearExecutionsBtn').onclick=clearExecutions;
 if($('clearLegacyPillboxBtn'))$('clearLegacyPillboxBtn').onclick=clearLegacyPillbox;
 
@@ -3112,6 +3809,52 @@ document.addEventListener('DOMContentLoaded',()=>{
   loadRadioStations();
 });
 
+
+// DP047B_COLUMNAS_INDEPENDIENTES_JS
+// Reorganiza solamente tarjetas existentes. Conserva nodos, datos,
+// valores de formularios y manejadores de eventos del panel.
+(function () {
+  function asegurarColumnasIndependientes() {
+    const grid = document.querySelector('#section-maintenance .systemOrderedGrid');
+    if (!grid) return;
+
+    const cards = Array.from(grid.querySelectorAll('.card[data-system-order]'))
+      .filter(card => card.closest('.systemOrderedGrid') === grid);
+    const byOrder = new Map(cards.map(card => [Number(card.dataset.systemOrder), card]));
+    const complete = cards.length === 9 && byOrder.size === 9 &&
+      Array.from({length:9}, (_, i) => i + 1).every(i => byOrder.has(i));
+
+    if (!complete) {
+      console.warn('DP-047B: estructura de tarjetas inesperada; no se reorganizo Sistema.');
+      return;
+    }
+
+    // Aunque el codigo anterior las haya colocado por filas, reunimos
+    // 1,3,5,7 en la izquierda y 2,4,6,8 en la derecha.
+    const left = document.createElement('div');
+    left.className = 'systemStackColumn systemStackLeft';
+    const right = document.createElement('div');
+    right.className = 'systemStackColumn systemStackRight';
+
+    for (let i = 1; i <= 8; i++) {
+      (i % 2 ? left : right).appendChild(byOrder.get(i));
+    }
+
+    const oldColumns = Array.from(grid.children)
+      .filter(el => el.classList.contains('systemStackColumn'));
+
+    grid.prepend(right);
+    grid.prepend(left);
+    oldColumns.forEach(col => col.remove());
+    grid.appendChild(byOrder.get(9));
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', asegurarColumnasIndependientes);
+  } else {
+    asegurarColumnasIndependientes();
+  }
+})();
 </script>
 </body>
 </html>)HTML";

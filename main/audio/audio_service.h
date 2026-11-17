@@ -19,6 +19,7 @@
 #include "esp_opus_enc.h"
 
 #include "audio_codec.h"
+#include "local_playback_receipt.h"
 #include "audio_debugger.h"
 #include "audio_engine.h"
 #include "fixed_queue.h"
@@ -103,6 +104,7 @@ struct AudioTask {
     uint32_t timestamp = 0;
     uint32_t playback_id = 0;
     uint32_t media_position_ms = 0;
+    std::shared_ptr<LocalPlaybackReceipt> local_receipt;
 };
 
 struct DebugStatistics {
@@ -146,8 +148,16 @@ public:
 
     bool PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait = false);
     std::unique_ptr<AudioStreamPacket> PopPacketFromSendQueue();
+    void DiscardPendingSendAudio();
     void PlaySound(const std::string_view& sound);
+    std::shared_ptr<LocalPlaybackReceipt> PlayTrackedCue(const std::string_view& sound,
+        const std::function<bool()>& keep_streaming = {});
+    LocalPlaybackResult CheckTrackedCue(const LocalPlaybackReceipt& receipt);
+    bool HasCarePriority() const { return care_signal_active_.load(); }
+
     // DP042A_RADIO_MP3_BASE: PCM externo proveniente de la radio.
+    bool ResetExternalOutputResampler();
+    bool PlayCareSignal();
     bool OutputExternalPcm(std::vector<int16_t>& data,
                            int source_sample_rate,
                            int source_channels);
@@ -229,8 +239,10 @@ private:
     std::atomic<bool> audio_input_need_warmup_{false};
 
     esp_timer_handle_t audio_power_timer_ = nullptr;
-    std::chrono::steady_clock::time_point last_input_time_;
-    std::chrono::steady_clock::time_point last_output_time_;
+    std::atomic<int64_t> last_input_us_{0};
+    std::atomic<int64_t> last_output_us_{0};
+    std::atomic<bool> care_signal_active_{false};
+    std::atomic<uint32_t> care_signal_epoch_{0};
 
     void AudioInputTask();
     void UpdateInputActivity(const std::vector<int16_t>& data);

@@ -8,7 +8,7 @@
  * and this component only routes Care visual alarms to that unified driver.
  *
  * Default wiring:
- *   WS2812B/NeoPixel DIN -> GPIO 38
+ *   WS2812B/NeoPixel DIN -> GPIO 48
  *   WS2812B/NeoPixel 5V  -> 5V external/board 5V
  *   WS2812B/NeoPixel GND -> common GND with ESP32-S3
  */
@@ -18,7 +18,7 @@
 #endif
 
 #ifndef XIAOZHI_CARE_LED_BAR_GPIO
-#define XIAOZHI_CARE_LED_BAR_GPIO 38
+#define XIAOZHI_CARE_LED_BAR_GPIO 48
 #endif
 
 #ifndef XIAOZHI_CARE_LED_BAR_COUNT

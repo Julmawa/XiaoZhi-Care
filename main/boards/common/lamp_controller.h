@@ -25,22 +25,13 @@ public:
         ESP_ERROR_CHECK(gpio_config(&config));
         gpio_set_level(gpio_num_, 0);
 
-        auto& mcp_server = McpServer::GetInstance();
-        mcp_server.AddTool("self.lamp.get_state", "Get the power state of the lamp", PropertyList(), [this](const PropertyList& properties) -> ReturnValue {
-            return power_ ? "{\"power\": true}" : "{\"power\": false}";
-        });
-
-        mcp_server.AddTool("self.lamp.turn_on", "Turn on the lamp", PropertyList(), [this](const PropertyList& properties) -> ReturnValue {
-            power_ = true;
-            gpio_set_level(gpio_num_, 1);
-            return true;
-        });
-
-        mcp_server.AddTool("self.lamp.turn_off", "Turn off the lamp", PropertyList(), [this](const PropertyList& properties) -> ReturnValue {
-            power_ = false;
-            gpio_set_level(gpio_num_, 0);
-            return true;
-        });
+        // DP-HA-010C-r4
+        // CARE usa Home Assistant para controlar luces y dispositivos del hogar.
+        // No registramos los tools genéricos self.lamp.* porque el modelo los
+        // confundía con entidades reales como "Lámpara de pie".
+        //
+        // El controlador GPIO local se conserva; solo se deshabilita su exposición
+        // como herramienta MCP.
     }
 };
 

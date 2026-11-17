@@ -24,7 +24,7 @@ idf_component_register(
         "src/daily_routine_execution_test.cc"
     INCLUDE_DIRS
         "include"
-    REQUIRES
+    REQUIRES care-restore
         nvs_flash
         care-voice
 )

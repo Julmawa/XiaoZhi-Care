@@ -927,7 +927,7 @@ bool LoadParticipantById(const std::string& id, FamilyParticipant& participant) 
         participant.nickname = profile_result == CareError::OK ? profile.nickname : std::string();
         participant.relationship = "usuaria principal";
         if (participant.name.empty() && participant.nickname.empty()) {
-            participant.nickname = "Yolita";
+            participant.nickname = "persona principal";
         }
         return true;
     }
@@ -988,7 +988,7 @@ bool ResolveFamilyParticipant(const std::string& query,
     const std::string profile_nickname = profile_result == CareError::OK ? Normalize(profile.nickname) : std::string();
 
     if (normalized_query.empty() || IsProfileOwnerQuery(query) || normalized_query == "usuaria principal" ||
-        normalized_query == "usuario principal" || normalized_query == "yolita" ||
+        normalized_query == "usuario principal" || normalized_query == "persona principal" ||
         normalized_query == "mi" || normalized_query == "yo" ||
         (!profile_name.empty() && normalized_query == profile_name) ||
         (!profile_nickname.empty() && normalized_query == profile_nickname)) {
@@ -2662,7 +2662,7 @@ std::string CareMcpService::GetDailyStatus(const std::string& date,
     cJSON_AddStringToObject(root, "time", FormatDailyTimeText(resolved_time).c_str());
     cJSON_AddBoolToObject(root, "used_device_clock", used_device_clock);
     cJSON_AddStringToObject(root, "instruction",
-                            "RESULTADO AUTORITATIVO DEL FIRMWARE. Responde usando safe_message y el arreglo routines. No afirmes ingesta medica. Para hablar con Yolita evita la palabra rutina: usa cosas para hacer hoy, lo que te toca, ya lo hiciste o deje anotado. Si view=pending, enumera solo lo pendiente. Si view=completed, enumera solo lo hecho. No contradigas los contadores.");
+                            "RESULTADO AUTORITATIVO DEL FIRMWARE. Responde usando safe_message y el arreglo routines. No afirmes ingesta medica. Para hablar con persona principal evita la palabra rutina: usa cosas para hacer hoy, lo que te toca, ya lo hiciste o deje anotado. Si view=pending, enumera solo lo pendiente. Si view=completed, enumera solo lo hecho. No contradigas los contadores.");
     cJSON_AddStringToObject(root, "authority", "firmware_decides_daily_status");
 
     cJSON* array = cJSON_AddArrayToObject(root, "routines");
@@ -4655,8 +4655,8 @@ std::string CareMcpService::ConfirmPillboxGroup(
                     result_json,
                     "ok");
 
-            record_ok =
-                cJSON_IsTrue(ok);
+            record_ok = cJSON_IsTrue(ok) &&
+                cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(result_json, "recorded"));
 
             cJSON_Delete(result_json);
         }

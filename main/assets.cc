@@ -1,3 +1,4 @@
+#include "sdkconfig.h"
 #include "assets.h"
 #include "application.h"
 #include "board.h"
@@ -488,6 +489,12 @@ bool Assets::EmoteStrategy::Apply(Assets* assets, bool refresh_display_theme) {
 
 bool Assets::Download(std::string url,
                       std::function<void(int progress, size_t speed)> progress_callback) {
+#if CONFIG_CARE_OTA_PROTECTION
+    (void)url;
+    (void)progress_callback;
+    ESP_LOGW(TAG, "CARE ASSETS lock: download refused");
+    return false;
+#endif
     ESP_LOGI(TAG, "Downloading new version of assets from %s", url.c_str());
 
     auto network = Board::GetInstance().GetNetwork();

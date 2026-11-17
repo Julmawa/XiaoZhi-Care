@@ -1,4 +1,6 @@
 #include "websocket_protocol.h"
+#include "ws_audio_frame.h"
+static_assert(sizeof(BinaryProtocol2) == 16 && sizeof(BinaryProtocol3) == 4);
 #include "application.h"
 #include "board.h"
 #include "settings.h"
@@ -59,7 +61,7 @@ bool WebsocketProtocol::SendText(const std::string& text) {
     }
 
     if (!websocket_->Send(text)) {
-        ESP_LOGE(TAG, "Failed to send text: %s", text.c_str());
+        ESP_LOGE(TAG, "Failed to send WebSocket text");
         SetError(Lang::Strings::SERVER_ERROR);
         return false;
     }
@@ -85,6 +87,7 @@ bool WebsocketProtocol::OpenAudioChannel() {
         version_ = version;
     }
 
+    xEventGroupClearBits(event_group_handle_, WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT);
     error_occurred_ = false;
 
     auto network = Board::GetInstance().GetNetwork();
@@ -107,36 +110,15 @@ bool WebsocketProtocol::OpenAudioChannel() {
 
     websocket_->OnData([this](const char* data, size_t len, bool binary) {
         if (binary) {
-            if (on_incoming_audio_ != nullptr) {
-                if (version_ == 2) {
-                    BinaryProtocol2* bp2 = (BinaryProtocol2*)data;
-                    bp2->version = ntohs(bp2->version);
-                    bp2->type = ntohs(bp2->type);
-                    bp2->timestamp = ntohl(bp2->timestamp);
-                    bp2->payload_size = ntohl(bp2->payload_size);
-                    auto payload = (uint8_t*)bp2->payload;
-                    on_incoming_audio_(std::make_unique<AudioStreamPacket>(AudioStreamPacket{
-                        .sample_rate = server_sample_rate_,
-                        .frame_duration = server_frame_duration_,
-                        .timestamp = bp2->timestamp,
-                        .payload = std::vector<uint8_t>(payload, payload + bp2->payload_size)}));
-                } else if (version_ == 3) {
-                    BinaryProtocol3* bp3 = (BinaryProtocol3*)data;
-                    bp3->type = bp3->type;
-                    bp3->payload_size = ntohs(bp3->payload_size);
-                    auto payload = (uint8_t*)bp3->payload;
-                    on_incoming_audio_(std::make_unique<AudioStreamPacket>(AudioStreamPacket{
-                        .sample_rate = server_sample_rate_,
-                        .frame_duration = server_frame_duration_,
-                        .timestamp = 0,
-                        .payload = std::vector<uint8_t>(payload, payload + bp3->payload_size)}));
-                } else {
-                    on_incoming_audio_(std::make_unique<AudioStreamPacket>(AudioStreamPacket{
-                        .sample_rate = server_sample_rate_,
-                        .frame_duration = server_frame_duration_,
-                        .timestamp = 0,
-                        .payload = std::vector<uint8_t>((uint8_t*)data, (uint8_t*)data + len)}));
-                }
+            const auto frame = care_protocol::ParseWsAudioFrame(version_,data,len);
+            if (!frame) { ESP_LOGW(TAG, "Invalid WebSocket audio frame"); return; }
+            if (on_incoming_audio_) {
+                auto packet = std::make_unique<AudioStreamPacket>();
+                packet->sample_rate = server_sample_rate_;
+                packet->frame_duration = server_frame_duration_;
+                packet->timestamp = frame->timestamp;
+                packet->payload.assign(frame->data,frame->data+frame->size);
+                on_incoming_audio_(std::move(packet));
             }
         } else {
             // Parse JSON data
@@ -151,11 +133,11 @@ bool WebsocketProtocol::OpenAudioChannel() {
                     }
                 }
             } else {
-                ESP_LOGE(TAG, "Missing message type, data: %s", std::string(data, len).c_str());
+                ESP_LOGE(TAG, "Missing message type in WebSocket JSON");
             }
             cJSON_Delete(root);
         }
-        last_incoming_time_ = std::chrono::steady_clock::now();
+        MarkIncoming();
     });
 
     websocket_->OnDisconnected([this]() {
@@ -165,7 +147,7 @@ bool WebsocketProtocol::OpenAudioChannel() {
         }
     });
 
-    ESP_LOGI(TAG, "Connecting to websocket server: %s with version: %d", url.c_str(), version_);
+    ESP_LOGI(TAG, "Connecting to WebSocket server (version %d)", version_);
     if (auto connected = websocket_->Connect(url.c_str()); !connected) {
         ESP_LOGE(TAG, "Failed to connect to websocket server: %s",
                  connected.error().ToString().c_str());
@@ -242,13 +224,17 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
     auto audio_params = cJSON_GetObjectItem(root, "audio_params");
     if (cJSON_IsObject(audio_params)) {
         auto sample_rate = cJSON_GetObjectItem(audio_params, "sample_rate");
-        if (cJSON_IsNumber(sample_rate)) {
-            server_sample_rate_ = sample_rate->valueint;
+        auto duration = cJSON_GetObjectItem(audio_params, "frame_duration");
+        const int rate = sample_rate && cJSON_IsNumber(sample_rate) ? sample_rate->valueint : server_sample_rate_;
+        const int ms = duration && cJSON_IsNumber(duration) ? duration->valueint : server_frame_duration_;
+        if ((sample_rate && (!cJSON_IsNumber(sample_rate) || sample_rate->valuedouble != rate)) ||
+            (duration && (!cJSON_IsNumber(duration) || duration->valuedouble != ms)) ||
+            !care_protocol::ValidOpusParams(rate,ms)) {
+            ESP_LOGW(TAG, "Unsupported server Opus parameters");
+            return;
         }
-        auto frame_duration = cJSON_GetObjectItem(audio_params, "frame_duration");
-        if (cJSON_IsNumber(frame_duration)) {
-            server_frame_duration_ = frame_duration->valueint;
-        }
+        server_sample_rate_ = rate;
+        server_frame_duration_ = ms;
     }
 
     xEventGroupSetBits(event_group_handle_, WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT);

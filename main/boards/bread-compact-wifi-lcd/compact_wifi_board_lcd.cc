@@ -8,13 +8,18 @@
 #include "mcp_server.h"
 #include "lamp_controller.h"
 #include "led/single_led.h"
-
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <driver/i2c_master.h>
 #include <esp_lcd_panel_vendor.h>
 #include <esp_lcd_panel_io.h>
 #include <esp_lcd_panel_ops.h>
 #include <driver/spi_common.h>
+#include <driver/gpio.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+
+
 
 #if defined(LCD_TYPE_ILI9341_SERIAL)
 #include "esp_lcd_ili9341.h"
@@ -63,6 +68,10 @@ class CompactWifiBoardLCD : public WifiBoard {
 private:
  
     Button boot_button_;
+    uint64_t care_press_receipt_ = 0;
+    Button touch_button_; // CARE_GPIO38_LED48_R1: TTP223 activo-alto
+    int64_t touch_press_us_ = 0;
+    bool touch_long_released_ = false;
     LcdDisplay* display_;
 
     void InitializeSpi() {
@@ -131,6 +140,35 @@ private:
             }
             app.ToggleChatState();
         });
+
+        // CARE_GPIO38_LED48_R1: TTP223 activo-alto, touch=GPIO38.
+        // Medimos el tiempo hasta SOLTAR, sin generar confirmaciones ficticias.
+        touch_button_.OnPressDown([this]() {
+            touch_press_us_ = esp_timer_get_time();
+            care_press_receipt_ = Application::GetInstance().CaptureCareReceipt();
+            touch_long_released_ = false;
+        });
+
+        touch_button_.OnPressUp([this]() {
+            if (touch_press_us_ == 0) return;
+            const int64_t elapsed_us = esp_timer_get_time() - touch_press_us_;
+            touch_press_us_ = 0;
+            if (elapsed_us >= 3000000LL) {
+                touch_long_released_ = true;
+                Application::GetInstance().ConfirmCareReceipt(care_press_receipt_);
+            }
+        });
+
+        touch_button_.OnClick([this]() {
+            if (touch_long_released_) {
+                touch_long_released_ = false;
+                return; // La pulsacion larga nunca abre/cierra el chat.
+            }
+            auto& app = Application::GetInstance();
+            if (app.GetDeviceState() == kDeviceStateStarting) return;
+            ESP_LOGI(TAG, "CARE_GPIO38: toque corto TTP223");
+            app.ToggleChatState();
+        });
     }
 
     // 物联网初始化，添加对 AI 可见设备
@@ -140,15 +178,32 @@ private:
 
 public:
     CompactWifiBoardLCD() :
-        boot_button_(BOOT_BUTTON_GPIO) {
-        InitializeSpi();
+        boot_button_(BOOT_BUTTON_GPIO),
+        touch_button_(TOUCH_BUTTON_GPIO, true, 3000) {
+
+        // DP-LCD-013: reset temprano del ST7789 por GPIO14.
+        ESP_ERROR_CHECK(gpio_reset_pin(DISPLAY_RST_PIN));
+        ESP_ERROR_CHECK(gpio_set_level(DISPLAY_RST_PIN, 1));
+        ESP_ERROR_CHECK(gpio_set_direction(DISPLAY_RST_PIN, GPIO_MODE_OUTPUT));
+
+        vTaskDelay(pdMS_TO_TICKS(20));
+
+        ESP_ERROR_CHECK(gpio_set_level(DISPLAY_RST_PIN, 0));
+        vTaskDelay(pdMS_TO_TICKS(30));
+
+        ESP_ERROR_CHECK(gpio_set_level(DISPLAY_RST_PIN, 1));
+        vTaskDelay(pdMS_TO_TICKS(120));
+
+        ESP_LOGI(TAG, "DP-LCD-013: reset temprano ST7789 completado");
+
+             InitializeSpi();
         InitializeLcdDisplay();
         InitializeButtons();
         InitializeTools();
+
         if (DISPLAY_BACKLIGHT_PIN != GPIO_NUM_NC) {
             GetBacklight()->RestoreBrightness();
         }
-        
     }
 
     virtual Led* GetLed() override {

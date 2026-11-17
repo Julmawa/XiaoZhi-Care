@@ -6,6 +6,10 @@ public:
     virtual ~Led() = default;
     // Set the led state based on the device state
     virtual void OnStateChanged() = 0;
+
+    // DP-CF-006_R2_FAMILY_ORANGE_LED
+    virtual bool ShowCareFamilyMessage() { return false; }
+    virtual void ClearCareFamilyMessage() {}
 };
 
 

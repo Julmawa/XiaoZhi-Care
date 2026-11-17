@@ -14,6 +14,8 @@ constexpr char kTag[] = "CARE_VITALS";
 constexpr char kNamespace[] = "care_vitals";
 constexpr char kSequenceKey[] = "bp_seq";
 constexpr uint32_t kMaxStoredReadings = 365;
+constexpr uint32_t kMaxSequence = 999999;
+constexpr size_t kMaxRecordLength = 2048;
 std::mutex g_mutex;
 
 std::string ReadString(const cJSON* root, const char* key) {
@@ -22,7 +24,8 @@ std::string ReadString(const cJSON* root, const char* key) {
 }
 int ReadInt(const cJSON* root, const char* key) {
     const cJSON* item = cJSON_GetObjectItemCaseSensitive(root, key);
-    return cJSON_IsNumber(item) ? item->valueint : 0;
+    return cJSON_IsNumber(item) && item->valuedouble == item->valueint &&
+        item->valueint >= 1 && item->valueint <= 400 ? item->valueint : 0;
 }
 bool Open(nvs_handle_t& h, nvs_open_mode_t mode, std::string& error) {
     const esp_err_t err = nvs_open(kNamespace, mode, &h);
@@ -35,7 +38,7 @@ bool Open(nvs_handle_t& h, nvs_open_mode_t mode, std::string& error) {
 }
 bool ReadRecord(nvs_handle_t h, const std::string& key, std::string& out) {
     size_t size = 0;
-    if (nvs_get_str(h, key.c_str(), nullptr, &size) != ESP_OK || size == 0) return false;
+    if (nvs_get_str(h, key.c_str(), nullptr, &size) != ESP_OK || size == 0 || size > kMaxRecordLength) return false;
     std::vector<char> buf(size);
     if (nvs_get_str(h, key.c_str(), buf.data(), &size) != ESP_OK) return false;
     out.assign(buf.data());
@@ -55,7 +58,10 @@ bool CareVitalsStore::IsValidDate(const std::string& v) {
         if (v[i]<'0' || v[i]>'9') return false;
     }
     int y=std::stoi(v.substr(0,4)), m=std::stoi(v.substr(5,2)), d=std::stoi(v.substr(8,2));
-    return y>=2020 && y<=2200 && m>=1 && m<=12 && d>=1 && d<=31;
+    if (y<2020 || y>2200 || m<1 || m>12 || d<1) return false;
+    constexpr int days[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+    const bool leap = y%4==0 && (y%100!=0 || y%400==0);
+    return d <= days[m-1] + (m==2 && leap ? 1 : 0);
 }
 bool CareVitalsStore::IsValidTime(const std::string& v) {
     if (v.size()!=5 || v[2]!=':') return false;
@@ -83,6 +89,7 @@ std::string CareVitalsStore::MakeId(uint32_t seq) {
 }
 std::string CareVitalsStore::Serialize(const BloodPressureReading& v) {
     cJSON* r=cJSON_CreateObject();
+    if (!r) return {};
     cJSON_AddStringToObject(r,"id",v.id.c_str());
     cJSON_AddStringToObject(r,"date",v.date.c_str());
     cJSON_AddStringToObject(r,"time",v.time.c_str());
@@ -104,22 +111,43 @@ bool CareVitalsStore::Deserialize(const std::string& text, BloodPressureReading&
     v.source=ReadString(r,"source"); v.notes=ReadString(r,"notes");
     cJSON_Delete(r); std::string e; return Validate(v,true,e);
 }
+namespace {
+template<class Visitor>
+bool VisitVitalsKeys(nvs_handle_t h, Visitor visitor) {
+    nvs_iterator_t it = nullptr;
+    auto err = nvs_entry_find_in_handle(h,NVS_TYPE_STR,&it);
+    while (err == ESP_OK) {
+        nvs_entry_info_t info{};
+        err = nvs_entry_info(it,&info);
+        if (err != ESP_OK) break;
+        const std::string id(info.key);
+        if (id.size()==8 && id.compare(0,2,"bp")==0 &&
+            id.find_first_not_of("0123456789",2)==std::string::npos && !visitor(id)) {
+            nvs_release_iterator(it);
+            return false;
+        }
+        err = nvs_entry_next(&it);
+    }
+    nvs_release_iterator(it);
+    return err == ESP_ERR_NVS_NOT_FOUND;
+}
+}
 bool CareVitalsStore::ListBloodPressure(std::vector<BloodPressureReading>& out, std::string& error) {
     std::lock_guard<std::mutex> lock(g_mutex); out.clear();
     nvs_handle_t h;
-    if(!Open(h,NVS_READONLY,error)) {
-        nvs_handle_t hw; std::string tmp;
-        if(Open(hw,NVS_READWRITE,tmp)){ nvs_close(hw); error.clear(); return true; }
-        return false;
-    }
-    uint32_t seq=0; esp_err_t err=nvs_get_u32(h,kSequenceKey,&seq);
-    if(err==ESP_ERR_NVS_NOT_FOUND){ nvs_close(h); error.clear(); return true; }
-    if(err!=ESP_OK){ nvs_close(h); error="NVS_READ_FAILED"; return false; }
-    for(uint32_t i=1;i<=seq;++i){
-        std::string t; if(!ReadRecord(h,MakeId(i),t))continue;
-        BloodPressureReading v; if(Deserialize(t,v))out.push_back(std::move(v));
-    }
+    const auto err = nvs_open(kNamespace,NVS_READONLY,&h);
+    if (err == ESP_ERR_NVS_NOT_FOUND) { error.clear(); return true; }
+    if (err != ESP_OK) { error="NVS_OPEN_FAILED"; return false; }
+    const bool ok = VisitVitalsKeys(h,[&](const std::string& id) {
+        if (out.size() >= kMaxStoredReadings) return false;
+        std::string text;
+        BloodPressureReading row;
+        if (!ReadRecord(h,id,text) || !Deserialize(text,row) || row.id != id) return false;
+        out.push_back(std::move(row));
+        return true;
+    });
     nvs_close(h);
+    if (!ok) { out.clear(); error="CORRUPT_OR_UNREADABLE_RECORD"; return false; }
     std::sort(out.begin(),out.end(),[](const auto&a,const auto&b){
         if(a.date!=b.date)return a.date>b.date;
         if(a.time!=b.time)return a.time>b.time;
@@ -133,7 +161,7 @@ bool CareVitalsStore::GetBloodPressure(const std::string& id, BloodPressureReadi
     nvs_handle_t h; if(!Open(h,NVS_READONLY,error))return false;
     std::string t; bool found=ReadRecord(h,id,t); nvs_close(h);
     if(!found){error="NOT_FOUND";return false;}
-    if(!Deserialize(t,out)){error="CORRUPT_RECORD";return false;}
+    if(!Deserialize(t,out) || out.id != id){error="CORRUPT_RECORD";return false;}
     error.clear(); return true;
 }
 bool CareVitalsStore::AddBloodPressure(BloodPressureReading v, BloodPressureReading& saved, std::string& error) {
@@ -144,15 +172,23 @@ bool CareVitalsStore::AddBloodPressure(BloodPressureReading v, BloodPressureRead
     uint32_t seq=0; esp_err_t err=nvs_get_u32(h,kSequenceKey,&seq);
     if(err!=ESP_OK && err!=ESP_ERR_NVS_NOT_FOUND){nvs_close(h);error="NVS_READ_FAILED";return false;}
     uint32_t existing=0;
-    for(uint32_t i=1;i<=seq;++i){size_t s=0;if(nvs_get_str(h,MakeId(i).c_str(),nullptr,&s)==ESP_OK)++existing;}
-    if(existing>=kMaxStoredReadings){nvs_close(h);error="LIMIT_REACHED";return false;}
+    const bool scanned = VisitVitalsKeys(h,[&](const std::string& id) {
+        ++existing;
+        const auto number = static_cast<uint32_t>(std::stoul(id.substr(2)));
+        seq = std::max(seq,number);
+        return existing < kMaxStoredReadings;
+    });
+    if(existing>=kMaxStoredReadings || seq>=kMaxSequence){nvs_close(h);error="LIMIT_REACHED";return false;}
+    if(!scanned){nvs_close(h);error="NVS_READ_FAILED";return false;}
     ++seq; v.id=MakeId(seq); std::string j=Serialize(v);
-    if(j.empty() || nvs_set_str(h,v.id.c_str(),j.c_str())!=ESP_OK ||
-       nvs_set_u32(h,kSequenceKey,seq)!=ESP_OK || nvs_commit(h)!=ESP_OK){
+    // Reserve the ID first. A failed record write can leave a gap but must not
+    // make a previously written record invisible or overwrite a prior entry.
+    if(j.empty() || nvs_set_u32(h,kSequenceKey,seq)!=ESP_OK || nvs_commit(h)!=ESP_OK ||
+       nvs_set_str(h,v.id.c_str(),j.c_str())!=ESP_OK || nvs_commit(h)!=ESP_OK){
         nvs_close(h);error="NVS_WRITE_FAILED";return false;
     }
     nvs_close(h); saved=v; error.clear();
-    ESP_LOGI(kTag,"Blood pressure saved id=%s",v.id.c_str()); return true;
+    ESP_LOGI(kTag,"Blood pressure record saved"); return true;
 }
 bool CareVitalsStore::UpdateBloodPressure(const BloodPressureReading& v, BloodPressureReading& saved, std::string& error) {
     std::lock_guard<std::mutex> lock(g_mutex);

@@ -233,8 +233,12 @@ int NoAudioCodec::Write(const int16_t* data, int samples) {
         }
     }
 
-    size_t bytes_written;
-    ESP_ERROR_CHECK(i2s_channel_write(tx_handle_, buffer.data(), samples * sizeof(int32_t), &bytes_written, portMAX_DELAY));
+    size_t bytes_written = 0;
+    const auto err = i2s_channel_write(tx_handle_, buffer.data(), samples * sizeof(int32_t), &bytes_written, 120);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "I2S output incomplete: %s", esp_err_to_name(err));
+        return 0;
+    }
     return bytes_written / sizeof(int32_t);
 }
 

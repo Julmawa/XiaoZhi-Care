@@ -22,6 +22,7 @@ ListeningSettings& ListeningSettings::GetInstance() {
 }
 
 bool ListeningSettings::Init() {
+    std::lock_guard<std::mutex> lock(nvs_mutex_);
     if (initialized_.load()) {
         return true;
     }
@@ -36,7 +37,7 @@ bool ListeningSettings::Init() {
     uint8_t raw = static_cast<uint8_t>(ListeningProfile::Medium);
     err = nvs_get_u8(handle, kProfileKey, &raw);
 
-    if (err == ESP_ERR_NVS_NOT_FOUND || !IsValidRaw(raw)) {
+    if (err == ESP_ERR_NVS_NOT_FOUND || (err == ESP_OK && !IsValidRaw(raw))) {
         raw = static_cast<uint8_t>(ListeningProfile::Medium);
         err = nvs_set_u8(handle, kProfileKey, raw);
         if (err == ESP_OK) {
@@ -77,6 +78,7 @@ const char* ListeningSettings::GetProfileName() const {
 }
 
 bool ListeningSettings::SetProfile(ListeningProfile profile) {
+    std::lock_guard<std::mutex> lock(nvs_mutex_);
     const uint8_t raw = static_cast<uint8_t>(profile);
     if (!IsValidRaw(raw)) {
         return false;

@@ -20,6 +20,7 @@ public:
     NvsRoutineRepository() = default;
     explicit NvsRoutineRepository(std::string nvs_namespace);
 
+    bool RestoreSequence(uint32_t& value, bool write);
     bool Init() override;
     RoutineId GenerateId() override;
     bool Save(const CareRoutine& routine) override;

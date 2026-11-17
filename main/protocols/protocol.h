@@ -3,9 +3,13 @@
 
 #include <cJSON.h>
 #include <chrono>
+#include <atomic>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
+
+class LocalPlaybackReceipt;
 
 struct AudioStreamPacket {
     int sample_rate = 0;
@@ -14,6 +18,7 @@ struct AudioStreamPacket {
     uint32_t playback_id = 0;
     uint32_t media_position_ms = 0;
     std::vector<uint8_t> payload;
+    std::shared_ptr<LocalPlaybackReceipt> local_receipt;
 };
 
 struct BinaryProtocol2 {
@@ -65,6 +70,8 @@ public:
     virtual bool IsAudioChannelOpened() const = 0;
     virtual bool SendAudio(std::unique_ptr<AudioStreamPacket> packet) = 0;
     virtual void SendWakeWordDetected(const std::string& wake_word);
+    // DP-CF-001-r1 — entrada textual breve al agente XiaoZhi.
+    virtual bool SendTextInput(const std::string& text);
     virtual void SendStartListening(ListeningMode mode);
     virtual void SendStopListening();
     virtual void SendAbortSpeaking(AbortReason reason);
@@ -81,9 +88,10 @@ protected:
 
     int server_sample_rate_ = 24000;
     int server_frame_duration_ = 60;
-    bool error_occurred_ = false;
+    std::atomic<bool> error_occurred_{false};
     std::string session_id_;
-    std::chrono::time_point<std::chrono::steady_clock> last_incoming_time_;
+    std::atomic<std::chrono::steady_clock::duration::rep> last_incoming_tick_{0};
+    void MarkIncoming() { last_incoming_tick_.store(std::chrono::steady_clock::now().time_since_epoch().count()); }
 
     virtual bool SendText(const std::string& text) = 0;
     virtual void SetError(const std::string& message);

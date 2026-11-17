@@ -1,4 +1,5 @@
-﻿#include "care_family/nvs_family_relationship_repository.h"
+#include "care_restore.h"
+#include "care_family/nvs_family_relationship_repository.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -29,16 +30,18 @@ constexpr size_t kMaxFamilyRecordSize = 2048;
 constexpr size_t kMaxFamilyIndexSize = 4096;
 
 bool Open(nvs_handle_t& handle, nvs_open_mode_t mode) {
+    if (restore::Generation()) return false;
     return nvs_open(kNamespace, mode, &handle) == ESP_OK;
 }
 
 std::string FamilyRecordPath(const std::string& id) {
     char path[96] = {};
     std::snprintf(path, sizeof(path), "%s/family_%s.json", kCareDataBasePath, id.c_str());
-    return path;
+    return restore::Path(path);
 }
 
 bool SaveFile(const char* path, const std::string& text) {
+    if (restore::Staging()) return restore::WriteCandidate(path, text);
     FILE* f = std::fopen(path, "wb");
     if (f == nullptr) return false;
     const size_t written = std::fwrite(text.data(), 1, text.size(), f);
@@ -81,6 +84,7 @@ bool DeleteFile(const char* path) {
 }
 
 bool DeleteNvsKey(const char* key) {
+    if (restore::Generation()) return true;
     nvs_handle_t handle = 0;
     if (!Open(handle, NVS_READWRITE)) return false;
     esp_err_t err = nvs_erase_key(handle, key);
@@ -146,14 +150,14 @@ std::vector<std::string> ReadIndexFromNvs() {
 
 std::vector<std::string> ReadIndex() {
     std::string raw;
-    if (LoadFile(kFamilyIndexPath, raw, kMaxFamilyIndexSize)) {
+    if (LoadFile(restore::Path(kFamilyIndexPath).c_str(), raw, kMaxFamilyIndexSize)) {
         return ParseIndexJson(raw);
     }
 
     std::vector<std::string> ids = ReadIndexFromNvs();
     if (!ids.empty()) {
         const std::string migrated = BuildIndexJson(ids);
-        if (!migrated.empty() && SaveFile(kFamilyIndexPath, migrated)) {
+        if (!migrated.empty() && SaveFile(restore::Path(kFamilyIndexPath).c_str(), migrated)) {
             DeleteNvsKey(kIndexKey);
             ESP_LOGI(kTag, "Migrated family index from NVS to care_data");
         }
@@ -164,14 +168,14 @@ std::vector<std::string> ReadIndex() {
 
 bool WriteIndex(const std::vector<std::string>& ids) {
     const std::string raw = BuildIndexJson(ids);
-    return !raw.empty() && SaveFile(kFamilyIndexPath, raw);
+    return !raw.empty() && SaveFile(restore::Path(kFamilyIndexPath).c_str(), raw);
 }
 
 bool ReadNextId(uint32_t& next_id) {
     next_id = 1;
 
     std::string raw;
-    if (LoadFile(kFamilyNextIdPath, raw, 32)) {
+    if (LoadFile(restore::Path(kFamilyNextIdPath).c_str(), raw, 32)) {
         char* end = nullptr;
         unsigned long value = std::strtoul(raw.c_str(), &end, 10);
         if (end != raw.c_str() && value > 0) {
@@ -189,7 +193,7 @@ bool ReadNextId(uint32_t& next_id) {
             next_id = nvs_next;
             char buffer[24] = {};
             std::snprintf(buffer, sizeof(buffer), "%lu", static_cast<unsigned long>(next_id));
-            if (SaveFile(kFamilyNextIdPath, buffer)) {
+            if (SaveFile(restore::Path(kFamilyNextIdPath).c_str(), buffer)) {
                 DeleteNvsKey(kNextIdKey);
                 ESP_LOGI(kTag, "Migrated family next_id from NVS to care_data");
             }
@@ -203,7 +207,7 @@ bool ReadNextId(uint32_t& next_id) {
 bool WriteNextId(uint32_t next_id) {
     char buffer[24] = {};
     std::snprintf(buffer, sizeof(buffer), "%lu", static_cast<unsigned long>(next_id));
-    const bool ok = SaveFile(kFamilyNextIdPath, buffer);
+    const bool ok = SaveFile(restore::Path(kFamilyNextIdPath).c_str(), buffer);
     if (ok) DeleteNvsKey(kNextIdKey);
     return ok;
 }
@@ -292,7 +296,12 @@ std::optional<FamilyRelationship> LoadRelationshipFromNvs(const std::string& id)
 
 }  // namespace
 
+bool NvsFamilyRelationshipRepository::RestoreSequence(uint32_t& value, bool write) {
+    return write ? WriteNextId(value) : ReadNextId(value);
+}
 bool NvsFamilyRelationshipRepository::Init() {
+    if (restore::Staging()) { ready_ = WriteIndex({}); return ready_; }
+    if (restore::Generation()) { ready_ = true; return true; }
     uint32_t next_id = 1;
     ReadNextId(next_id);
 

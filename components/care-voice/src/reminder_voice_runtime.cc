@@ -1,4 +1,5 @@
-﻿#include "care_voice/reminder_voice_runtime.h"
+#include "care_voice/reminder_voice_runtime.h"
+#include "care_voice/reminder_audio_bridge.h"
 
 #include <cctype>
 #include <cstdio>
@@ -26,7 +27,7 @@ extern "C" bool __attribute__((weak)) xiaozhi_care_reminder_audio_notify(
     const char* reminder_id,
     const char* message,
     const uint8_t* audio_data,
-    size_t audio_size) {
+    size_t audio_size, std::shared_ptr<std::atomic<int>>) {
     (void)reminder_id;
     (void)message;
     (void)audio_data;
@@ -150,26 +151,14 @@ ReminderVoiceRuntime& ReminderVoiceRuntime::GetInstance() {
 }
 
 bool ReminderVoiceRuntime::Start() {
-    if (task_ != nullptr) return true;
-
-    if (!VoiceRecordingStore::GetInstance().Init()) {
-        ESP_LOGE(kTag, "Voice store not ready; reminder audio runtime not started");
+    if (started_.exchange(true)) return true;
+    if (xTaskCreate(&ReminderVoiceRuntime::TaskEntry,"care_rem_voice",
+                    kTaskStackBytes,this,kTaskPriority,nullptr)!=pdPASS) {
+        started_.store(false);
+        ESP_LOGE(kTag,"Unable to create reminder audio task");
         return false;
     }
 
-    TaskHandle_t created_task = nullptr;
-    const BaseType_t result = xTaskCreate(&ReminderVoiceRuntime::TaskEntry,
-                                          "care_rem_voice",
-                                          kTaskStackBytes,
-                                          this,
-                                          kTaskPriority,
-                                          &created_task);
-    if (result != pdPASS || created_task == nullptr) {
-        ESP_LOGE(kTag, "Unable to create reminder audio task");
-        return false;
-    }
-
-    task_ = created_task;
     ESP_LOGI(kTag,
              "Reminder audio runtime started tick_ms=%u grace_s=%d",
              static_cast<unsigned>(kTickIntervalMs),
@@ -183,6 +172,10 @@ void ReminderVoiceRuntime::TaskEntry(void* arg) {
 }
 
 void ReminderVoiceRuntime::Run() {
+    while (!VoiceRecordingStore::GetInstance().Init()) {
+        ESP_LOGW(kTag,"Voice store not ready; retrying");
+        vTaskDelay(pdMS_TO_TICKS(kTickIntervalMs));
+    }
     while (true) {
         Tick();
         vTaskDelay(pdMS_TO_TICKS(kTickIntervalMs));
@@ -208,6 +201,20 @@ void ReminderVoiceRuntime::Tick() {
                                          local_tm.tm_mon + 1,
                                          local_tm.tm_mday);
     const int now_seconds = local_tm.tm_hour * 3600 + local_tm.tm_min * 60 + local_tm.tm_sec;
+
+    if (fired_date_ != today) {
+        last_fired_occurrence_.clear();
+        fired_date_=today;
+    }
+    if (pending_result_) {
+        const auto status=pending_result_->load();
+        if (status==0) return;
+        if (status==1 && pending_occurrence_.compare(0,10,today)==0)
+            last_fired_occurrence_[pending_id_]=pending_occurrence_;
+        pending_result_.reset();
+        pending_id_.clear();
+        pending_occurrence_.clear();
+    }
 
     auto& store = VoiceRecordingStore::GetInstance();
     const std::vector<VoiceRecordingInfo> recordings = store.List();
@@ -251,11 +258,12 @@ void ReminderVoiceRuntime::Tick() {
         }
 
         const std::string message = reminder.title.empty() ? "Recordatorio" : reminder.title;
+        auto result=std::make_shared<std::atomic<int>>(0);
         const bool accepted = ::xiaozhi_care_reminder_audio_notify(
             reminder.id.c_str(),
             message.c_str(),
             reinterpret_cast<const uint8_t*>(audio.data()),
-            audio.size());
+            audio.size(),result);
 
         if (!accepted) {
             // XiaoZhi puede estar escuchando/hablando/notificando. No marcamos como
@@ -267,17 +275,12 @@ void ReminderVoiceRuntime::Tick() {
             continue;
         }
 
-        last_fired_occurrence_[reminder.id] = occurrence;
-        ESP_LOGI(kTag,
-                 "Reminder audio accepted: reminder=%s recording=%s bytes=%u occurrence=%s",
-                 reminder.id.c_str(),
-                 recording.id.c_str(),
-                 static_cast<unsigned>(audio.size()),
-                 occurrence.c_str());
+        pending_result_=std::move(result);
+        pending_id_=reminder.id;
+        pending_occurrence_=occurrence;
+        ESP_LOGI(kTag,"Reminder recording queued; waiting for playback");
 
-        // DP040C_FASE1B_REMINDER_VISUAL
-        // El LED acompaña únicamente una presentación realmente aceptada.
-        // No cambia estados del recordatorio ni crea ejecuciones.
+        // The visual overlay is separate from the audio completion.
         const bool visual_handled = ::xiaozhi_care_alarm_visual_notify(
             reminder.id.c_str(),
             kReminderVisualPattern,
@@ -291,10 +294,8 @@ void ReminderVoiceRuntime::Tick() {
                  kReminderVisualColor,
                  visual_handled ? 1 : 0);
 
-        // Present at most one reminder per tick. Besides being friendlier, this
-        // guarantees that Application's binary cache is not replaced twice in
-        // the same scheduled main-task batch. Other reminders due in the same
-        // minute are picked up on subsequent ticks within the grace window.
+        // Only one local recording in flight. Other due reminders are
+        // evaluated on later ticks within the original grace window.
         break;
     }
 }

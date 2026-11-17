@@ -1,3 +1,7 @@
+#include "../../main/audio/care_audio_diag_v278.h"
+#include "care_radio/pcm_rules.h"
+#include "care_restore.h"
+#include "esp_timer.h"
 #include "care_radio/radio_service.h"
 
 #include <algorithm>
@@ -20,7 +24,6 @@ namespace xiaozhi_care::radio {
 namespace {
 
 constexpr char kTag[] = "CARE_RADIO";
-constexpr char kNvsNamespace[] = "care_radio";
 constexpr char kNvsName[] = "name";
 constexpr char kNvsUrl[] = "url";
 
@@ -145,6 +148,7 @@ bool RadioService::Init(OutputCallback output_cb) {
         }
     }
 
+    care_audio_diag_v278::start_monitor();
     initialized_.store(true);
     ESP_LOGI(kTag, "Radio ready: station='%s'", GetStationName().c_str());
     return true;
@@ -157,7 +161,7 @@ bool RadioService::LoadSettings() {
     default_station_index_ = 0;
 
     nvs_handle_t handle = 0;
-    esp_err_t err = nvs_open(kNvsNamespace, NVS_READWRITE, &handle);
+    esp_err_t err = nvs_open(restore::RadioNamespace(restore::Active().radio).c_str(), NVS_READWRITE, &handle);
     if (err != ESP_OK) {
         stations_.push_back({kDefaultStationName, kDefaultStationUrl});
         station_name_ = stations_[0].name;
@@ -279,28 +283,37 @@ bool RadioService::LoadSettings() {
 
 
 bool RadioService::SaveSettingsLocked() {
-    if (stations_.empty() ||
-        stations_.size() > kMaxStations ||
-        default_station_index_ < 0 ||
-        default_station_index_ >= static_cast<int>(stations_.size())) {
+    return SaveStationSet(restore::RadioNamespace(restore::Active().radio).c_str(), stations_, default_station_index_);
+}
+
+bool RadioService::StageStations(uint16_t generation, const std::vector<RadioStation>& stations, int index) {
+    return generation != 0 && generation != restore::Active().radio &&
+           SaveStationSet(restore::RadioNamespace(generation).c_str(), stations, index);
+}
+
+bool RadioService::SaveStationSet(const char* name_space, const std::vector<RadioStation>& stations, int default_index) {
+    if (stations.empty() ||
+        stations.size() > kMaxStations ||
+        default_index < 0 ||
+        default_index >= static_cast<int>(stations.size())) {
         return false;
     }
 
     nvs_handle_t handle = 0;
-    esp_err_t err = nvs_open(kNvsNamespace, NVS_READWRITE, &handle);
+    esp_err_t err = nvs_open(name_space, NVS_READWRITE, &handle);
 
     if (err == ESP_OK) {
         err = nvs_set_u8(
             handle,
             kNvsCount,
-            static_cast<uint8_t>(stations_.size()));
+            static_cast<uint8_t>(stations.size()));
     }
 
     if (err == ESP_OK) {
         err = nvs_set_u8(
             handle,
             kNvsDefault,
-            static_cast<uint8_t>(default_station_index_));
+            static_cast<uint8_t>(default_index));
     }
 
     for (size_t i = 0; err == ESP_OK && i < kMaxStations; ++i) {
@@ -311,12 +324,12 @@ bool RadioService::SaveSettingsLocked() {
         snprintf(url_key, sizeof(url_key), "u%u",
                  static_cast<unsigned>(i));
 
-        if (i < stations_.size()) {
+        if (i < stations.size()) {
             err = nvs_set_str(
-                handle, name_key, stations_[i].name.c_str());
+                handle, name_key, stations[i].name.c_str());
             if (err == ESP_OK) {
                 err = nvs_set_str(
-                    handle, url_key, stations_[i].url.c_str());
+                    handle, url_key, stations[i].url.c_str());
             }
         } else {
             nvs_erase_key(handle, name_key);
@@ -326,7 +339,7 @@ bool RadioService::SaveSettingsLocked() {
 
     if (err == ESP_OK) {
         const auto& def =
-            stations_[static_cast<size_t>(default_station_index_)];
+            stations[static_cast<size_t>(default_index)];
         err = nvs_set_str(handle, kNvsName, def.name.c_str());
         if (err == ESP_OK) {
             err = nvs_set_str(handle, kNvsUrl, def.url.c_str());
@@ -505,7 +518,42 @@ void RadioService::SetNetworkActivityCallback(
     network_activity_cb_ = std::move(callback);
 }
 
+
+// DP-CF-003 - reproducción corta para TTS/avisos.
+bool RadioService::PlayOneShotUrl(const std::string& url, bool allow_redirects, Completion on_done,
+                                  std::function<bool()> admit_first_pcm) {
+    if (!initialized_.load() || url.empty()) {
+        ESP_LOGW(kTag, "One-shot requested before init or with empty URL");
+        return false;
+    }
+
+    NetworkActivityCallback cb;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (one_shot_active_.load()) return false;
+        one_shot_url_ = url;
+        one_shot_completion_ = std::move(on_done);
+        one_shot_admission_ = std::move(admit_first_pcm);
+        one_shot_resume_radio_.store(wants_playing_.load() && !user_paused_.load());
+        one_shot_allow_redirects_.store(allow_redirects);
+        stream_generation_.fetch_add(1);
+        ClearPcmBuffer();
+        one_shot_failed_.store(false);
+        one_shot_pcm_written_.store(false);
+        one_shot_active_.store(true);
+        user_paused_.store(false);
+        wants_playing_.store(true);
+        cb = network_activity_cb_;
+    }
+    if (cb) cb(true);
+
+    ESP_LOGI(kTag, "DP-CF-003: one-shot audio requested");
+    return true;
+}
+
+
 bool RadioService::Play() {
+    if (one_shot_active_.load()) return false;
     if (!initialized_.load()) return false;
 
     NetworkActivityCallback cb;
@@ -540,6 +588,7 @@ bool RadioService::Play() {
 
 // DP043B_RADIO_AAC_VOICE
 bool RadioService::PlayStation(const std::string& selector) {
+    if (one_shot_active_.load()) return false;
     if (!initialized_.load()) {
         return false;
     }
@@ -643,6 +692,7 @@ bool RadioService::PlayStation(const std::string& selector) {
 }
 
 bool RadioService::NextStation() {
+    if (one_shot_active_.load()) return false;
     if (!initialized_.load()) {
         return false;
     }
@@ -717,16 +767,21 @@ std::string RadioService::StationsJson() const {
 
 void RadioService::Stop() {
     NetworkActivityCallback cb;
+    Completion done;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         cb = network_activity_cb_;
+        done = std::move(one_shot_completion_);
+            one_shot_admission_ = {};
+        one_shot_url_.clear();
+        wants_playing_.store(false);
+        user_paused_.store(false);
+        stream_generation_.fetch_add(1);
+        streaming_.store(false);
+        one_shot_active_.store(false);
+        ClearPcmBuffer();
     }
-
-    wants_playing_.store(false);
-    user_paused_.store(false);
-    stream_generation_.fetch_add(1);
-    streaming_.store(false);
-    ClearPcmBuffer();
+    if (done) done(false);
 
     if (cb) cb(false);
 
@@ -739,6 +794,7 @@ bool RadioService::Pause() {
     if (!wants_playing_.load()) {
         return false;
     }
+    if (one_shot_active_.load()) { Stop(); return true; }
     user_paused_.store(true);
     ClearPcmBuffer();
     ESP_LOGI(kTag, "User pause");
@@ -746,6 +802,7 @@ bool RadioService::Pause() {
 }
 
 bool RadioService::Resume() {
+    if (one_shot_active_.load()) return false;
     if (!initialized_.load() || GetStationUrl().empty()) {
         return false;
     }
@@ -769,6 +826,7 @@ void RadioService::SetSystemPaused(bool paused) {
     const bool old = system_paused_.exchange(paused);
 
     if (paused && !old) {
+        if (one_shot_active_.load()) one_shot_failed_.store(true);
         // DP042B_RADIO_JITTER_BUFFER
         // No reproducir audio viejo después de que XiaoZhi habló.
         ClearPcmBuffer();
@@ -815,13 +873,14 @@ void RadioService::PlaybackTaskEntry(void* arg) {
 void RadioService::ClearPcmBuffer() {
     std::lock_guard<std::mutex> lock(pcm_buffer_mutex_);
     pcm_buffer_.clear();
+    pcm_eof_generation_.store(0);
     buffered_ms_ = 0;
     buffer_ready_.store(false);
 }
 
 bool RadioService::EnqueuePcm(std::vector<int16_t>&& pcm,
                               int sample_rate,
-                              int channels) {
+                              int channels, uint32_t generation) {
     if (pcm.empty() || sample_rate <= 0 || channels <= 0) {
         return false;
     }
@@ -840,17 +899,19 @@ bool RadioService::EnqueuePcm(std::vector<int16_t>&& pcm,
         duration_ms = 1;
     }
 
-    while (wants_playing_.load() &&
+    while (generation == stream_generation_.load() && wants_playing_.load() &&
            !system_paused_.load() &&
            !user_paused_.load()) {
         {
             std::lock_guard<std::mutex> lock(pcm_buffer_mutex_);
+            if (generation != stream_generation_.load()) return false;
             if (buffered_ms_ < kMaxBufferMs) {
                 BufferedPcm item;
                 item.pcm = std::move(pcm);
                 item.sample_rate = sample_rate;
                 item.channels = channels;
                 item.duration_ms = duration_ms;
+                item.generation = generation;
 
                 pcm_buffer_.push_back(std::move(item));
                 buffered_ms_ += duration_ms;
@@ -858,7 +919,7 @@ bool RadioService::EnqueuePcm(std::vector<int16_t>&& pcm,
             }
         }
 
-        vTaskDelay(pdMS_TO_TICKS(5));
+        vTaskDelay(1);
     }
 
     return false;
@@ -884,8 +945,8 @@ void RadioService::PlaybackTask() {
             std::lock_guard<std::mutex> lock(pcm_buffer_mutex_);
             buffered_now = buffered_ms_;
 
-            if (!buffer_ready_.load() &&
-                buffered_ms_ >= kPrebufferMs) {
+            if (!buffer_ready_.load() && StartBufferedPcm(buffered_ms_,kPrebufferMs,
+                !pcm_buffer_.empty(),pcm_eof_generation_.load() == stream_generation_.load())) {
                 buffer_ready_.store(true);
             }
 
@@ -901,12 +962,13 @@ void RadioService::PlaybackTask() {
                 }
 
                 have_item = true;
+                pcm_in_flight_ = true;
             }
         }
 
-        if (!buffer_ready_.load()) {
+        if (!have_item && !buffer_ready_.load()) {
             reported_ready = false;
-            vTaskDelay(pdMS_TO_TICKS(5));
+            vTaskDelay(1);
             continue;
         }
 
@@ -924,21 +986,35 @@ void RadioService::PlaybackTask() {
             ESP_LOGW(
                 kTag,
                 "Radio buffer underrun; rebuffering");
-            vTaskDelay(pdMS_TO_TICKS(5));
+            vTaskDelay(1);
             continue;
         }
 
         OutputCallback cb;
+        std::function<bool()> admit;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             cb = output_cb_;
+            if (item.generation==stream_generation_.load() && one_shot_active_.load() &&
+                !one_shot_failed_.load() && !one_shot_pcm_written_.load()) admit=one_shot_admission_;
         }
 
-        if (cb) {
-            cb(
-                item.pcm,
-                item.sample_rate,
-                item.channels);
+        // Authorization can change while the HTTPS stream is being prepared.
+        // Call outside radio locks; do not query NVS on every PCM frame.
+        const bool permitted=!admit || admit();
+        const bool valid = permitted && item.generation == stream_generation_.load() && wants_playing_.load() &&
+            !system_paused_.load() && !user_paused_.load() &&
+            !(one_shot_active_.load() && one_shot_failed_.load());
+        care_audio_diag_v278::mark(10);
+        const bool wrote = valid && cb && cb(item.pcm,item.sample_rate,item.channels);
+        care_audio_diag_v278::mark(0);
+        {
+            std::lock_guard<std::mutex> lock(pcm_buffer_mutex_);
+            if (one_shot_active_.load() && item.generation == stream_generation_.load()) {
+                if (wrote) one_shot_pcm_written_.store(true);
+                else one_shot_failed_.store(true);
+            }
+            pcm_in_flight_ = false;
         }
     }
 }
@@ -951,39 +1027,99 @@ void RadioService::WorkerTask() {
             continue;
         }
 
-        const uint32_t generation = stream_generation_.load();
-        const std::string url = GetStationUrl();
+        uint32_t generation;
+        bool one_shot, allow_redirects;
+        std::string url;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            generation = stream_generation_.load();
+            one_shot = one_shot_active_.load();
+            allow_redirects = !one_shot || one_shot_allow_redirects_.load();
+            url = one_shot ? one_shot_url_ : station_url_;
+        }
 
         if (url.empty()) {
             wants_playing_.store(false);
+            one_shot_active_.store(false);
             streaming_.store(false);
             continue;
         }
 
-        const bool ok = StreamOnce(url, generation);
+        const bool ok = StreamOnce(url, generation, allow_redirects);
         streaming_.store(false);
 
-        if (wants_playing_.load() &&
-            generation == stream_generation_.load()) {
+        if (generation != stream_generation_.load()) {
+            continue;
+        }
+
+        if (one_shot && one_shot_active_.load()) {
+            ESP_LOGI(
+                kTag,
+                "DP-CF-003: one-shot stream ended (%s), draining PCM",
+                ok ? "eof" : "error"
+            );
+
+            pcm_eof_generation_.store(generation);
+            bool drained = false;
+            for (int i = 0; i < 400 && generation == stream_generation_.load() &&
+                 !one_shot_failed_.load(); ++i) {
+                bool empty = false;
+                {
+                    std::lock_guard<std::mutex> lock(pcm_buffer_mutex_);
+                    empty = pcm_buffer_.empty() && buffered_ms_ == 0 && !pcm_in_flight_;
+                }
+                if (empty) { drained = true; break; }
+                vTaskDelay(pdMS_TO_TICKS(10));
+            }
+
+            if (generation != stream_generation_.load()) continue;
+            const bool complete = FinishedPcm(ok,drained,one_shot_pcm_written_.load(),one_shot_failed_.load());
+            NetworkActivityCallback inactive;
+            Completion done;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (generation != stream_generation_.load() || !one_shot_active_.load()) continue;
+                const bool resume = one_shot_resume_radio_.load();
+                one_shot_url_.clear();
+                done = std::move(one_shot_completion_);
+                one_shot_admission_ = {};
+                one_shot_active_.store(false);
+                one_shot_resume_radio_.store(false);
+                ClearPcmBuffer();
+                wants_playing_.store(resume);
+                if (resume) user_paused_.store(false);
+                else inactive = network_activity_cb_;
+            }
+            if (inactive) inactive(false);
+            if (done) done(complete);
+            ESP_LOGI(kTag, "One-shot completed=%d", complete);
+            continue;
+        }
+
+        if (wants_playing_.load()) {
             ESP_LOGW(
                 kTag,
                 "Stream ended (%s); reconnecting in %d ms",
                 ok ? "eof" : "error",
-                kReconnectDelayMs);
+                kReconnectDelayMs
+            );
             vTaskDelay(pdMS_TO_TICKS(kReconnectDelayMs));
         }
     }
 }
 
 
+
 bool RadioService::StreamOnce(const std::string& url,
-                              uint32_t generation) {
+                              uint32_t generation,
+                              bool allow_redirects) {
     esp_http_client_config_t config = {};
     config.url = url.c_str();
     config.timeout_ms = kHttpTimeoutMs;
     config.crt_bundle_attach = esp_crt_bundle_attach;
     config.keep_alive_enable = true;
-    config.disable_auto_redirect = false;
+    // DP-TG-045: preserve legacy radio behavior, block redirects for Telegram.
+    config.disable_auto_redirect = !allow_redirects;
     config.max_redirection_count = 4;
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
@@ -1012,6 +1148,14 @@ bool RadioService::StreamOnce(const std::string& url,
         status = esp_http_client_get_status_code(client);
 
         if (status >= 300 && status < 400) {
+            // One-shot audio is restricted to a validated source URL. Never
+            // allow an HTTP redirect to escape that source allowlist.
+            if (!allow_redirects) {
+                ESP_LOGW(kTag, "DP-TG-045: restricted one-shot redirect rejected status=%d", status);
+                esp_http_client_close(client);
+                esp_http_client_cleanup(client);
+                return false;
+            }
             if (redirect >= 4) {
                 ESP_LOGW(kTag, "Radio redirect limit reached status=%d", status);
                 esp_http_client_close(client);
@@ -1103,16 +1247,16 @@ bool RadioService::StreamOnce(const std::string& url,
     std::vector<uint8_t> pcm_buffer(kPcmBufferBytes);
 
     streaming_.store(true);
-    ESP_LOGI(
-        kTag,
-        "Streaming %s: %s",
-        is_aac ? "AAC/AAC+" : "MP3",
-        GetStationName().c_str());
+    ESP_LOGI(kTag, "Streaming codec=%s", is_aac ? "AAC/AAC+" : "MP3");
 
     bool result = true;
 
-    while (wants_playing_.load() &&
-           generation == stream_generation_.load()) {
+    const int64_t deadline = one_shot_active_.load() ? esp_timer_get_time() + 45000000 : 0;
+    while (wants_playing_.load() && generation == stream_generation_.load()) {
+        if (deadline && (one_shot_failed_.load() || esp_timer_get_time() > deadline)) {
+            result = false;
+            break;
+        }
         const int received = esp_http_client_read(
             client,
             reinterpret_cast<char*>(http_buffer.data()),
@@ -1124,14 +1268,19 @@ bool RadioService::StreamOnce(const std::string& url,
             break;
         }
         if (received == 0) {
-            result = true;
+            result = !deadline || esp_http_client_is_complete_data_received(client);
             break;
         }
 
         size_t offset = 0;
+        // DP-TG-V2.67: avoid starving IDLE0 during MP3 decode.
+        unsigned int decode_iterations = 0;
         while (offset < static_cast<size_t>(received) &&
                wants_playing_.load() &&
                generation == stream_generation_.load()) {
+            if ((++decode_iterations % 8U) == 0U) {
+                vTaskDelay(1);
+            }
             esp_audio_simple_dec_raw_t raw = {};
             raw.buffer = http_buffer.data() + offset;
             raw.len = static_cast<uint32_t>(
@@ -1194,12 +1343,20 @@ bool RadioService::StreamOnce(const std::string& url,
                         EnqueuePcm(
                             std::move(pcm),
                             static_cast<int>(info.sample_rate),
-                            static_cast<int>(info.channel));
+                            static_cast<int>(info.channel), generation);
                     }
                 }
             }
 
-            if (raw.consumed == 0 && out.decoded_size == 0) break;
+            // A decoder that outputs PCM without consuming input can
+            // otherwise repeat the same input indefinitely. Fail closed.
+            if (raw.consumed == 0) {
+                if (out.decoded_size > 0) {
+                    ESP_LOGW(kTag, "DP-TG-V2.67: decoder made no input progress");
+                    result = false;
+                }
+                break;
+            }
         }
     }
 

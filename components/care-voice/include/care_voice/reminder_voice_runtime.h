@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include <map>
+#include <atomic>
+#include <memory>
 #include <string>
 
 #include <freertos/FreeRTOS.h>
@@ -21,7 +23,7 @@ public:
 
     // Idempotente. Puede llamarse más de una vez sin crear tareas duplicadas.
     bool Start();
-    bool IsRunning() const { return task_ != nullptr; }
+    bool IsRunning() const { return started_.load(); }
 
 private:
     ReminderVoiceRuntime() = default;
@@ -30,8 +32,10 @@ private:
     void Run();
     void Tick();
 
-    TaskHandle_t task_{nullptr};
+    std::atomic<bool> started_{false};
     std::map<std::string, std::string> last_fired_occurrence_;
+    std::string fired_date_,pending_id_,pending_occurrence_;
+    std::shared_ptr<std::atomic<int>> pending_result_;
     bool clock_warning_logged_{false};
 };
 

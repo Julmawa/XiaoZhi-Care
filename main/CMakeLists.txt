@@ -40,10 +40,12 @@ set(SOURCES "audio/audio_codec.cc"
             "settings.cc"
             "device_state_machine.cc"
             "assets.cc"
+            "care_homeassistant/care_homeassistant.cc"
             "main.cc"
             )
 
-set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "audio/demuxer" "protocols")
+set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "audio/demuxer" "protocols" "care_homeassistant")
+
 
 # Add board common files
 list(APPEND SOURCES
@@ -573,9 +575,9 @@ elseif(CONFIG_BOARD_TYPE_ESP32_S31_KORVO_1)
     set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_64)
 elseif(CONFIG_BOARD_TYPE_BREAD_COMPACT_WIFI_LCD)
     set(BOARD_DIR "bread-compact-wifi-lcd")
-    set(BUILTIN_TEXT_FONT font_noto_sans_basic_16_4)
-    set(BUILTIN_ICON_FONT font_material_symbols_16_4)
-    set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_32)
+    set(BUILTIN_TEXT_FONT font_noto_sans_basic_30_4)
+    set(BUILTIN_ICON_FONT font_material_symbols_20_4)
+    set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_64)
 elseif(CONFIG_BOARD_TYPE_LILYGO_T_CIRCLE_S3)
     set(BOARD_DIR "lilygo/t-circle-s3")
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_16_4)
@@ -1104,8 +1106,10 @@ idf_component_register(SRCS ${SOURCES}
                         care-daily
                         care-listening
                         care-web
+                        care-restore
                         care-core
                         care-storage
+                        care-telegram
                         care-mcp
                         care-radio
                         xiaozhi-fonts

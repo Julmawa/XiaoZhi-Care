@@ -227,6 +227,14 @@ class VersionTests(unittest.TestCase):
                             "project default",
                         )
                     elif key == "CONFIG_PARTITION_TABLE_CUSTOM_FILENAME":
+                        if (config_path.relative_to(ROOT).as_posix() ==
+                            "main/boards/bread-compact-wifi-lcd/config.json" and
+                            build_config.get("name") == "bread-compact-wifi-lcd-care-7pin"):
+                            self.assertEqual(value, '"partitions/xiaozhi-care/16m_care.csv"')
+                            self.assertIn("CONFIG_PARTITION_TABLE_CUSTOM=y",build_config["sdkconfig_append"])
+                            self.assertIn("CONFIG_CARE_OTA_PROTECTION=y",build_config["sdkconfig_append"])
+                            self.assertTrue((ROOT / value.strip('"')).is_file())
+                            continue
                         self.assertNotEqual(
                             defaults.get(key),
                             value,

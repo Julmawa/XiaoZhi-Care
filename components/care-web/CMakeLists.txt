@@ -4,10 +4,11 @@ idf_component_register(
         "care_web_data.cc"
         "care_web_page.cc"
     INCLUDE_DIRS "include"
-    REQUIRES
+    REQUIRES care-restore esp_timer
         care-radio
         care-news
         care-core
+        care-telegram
         care-daily
         care-listening
         care-family

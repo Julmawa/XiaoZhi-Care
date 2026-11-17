@@ -79,6 +79,16 @@ void Protocol::SendWakeWordDetected(const std::string& wake_word) {
     SendText(json);
 }
 
+// DP-CF-001-r1
+bool Protocol::SendTextInput(const std::string& text) {
+    std::string json =
+        "{\"session_id\":\"" + session_id_ +
+        "\",\"type\":\"listen\",\"state\":\"detect\",\"text\":\"" +
+        text + "\"}";
+
+    return SendText(json);
+}
+
 void Protocol::SendStartListening(ListeningMode mode) {
     std::string message = "{\"session_id\":\"" + session_id_ + "\"";
     message += ",\"type\":\"listen\",\"state\":\"start\"";
@@ -108,7 +118,7 @@ void Protocol::SendMcpMessage(const std::string& payload) {
 bool Protocol::IsTimeout() const {
     const int kTimeoutSeconds = 120;
     auto now = std::chrono::steady_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::seconds>(now - last_incoming_time_);
+    auto duration = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch() - std::chrono::steady_clock::duration(last_incoming_tick_.load()));
     bool timeout = duration.count() > kTimeoutSeconds;
     if (timeout) {
         ESP_LOGE(TAG, "Channel timeout %ld seconds", (long)duration.count());

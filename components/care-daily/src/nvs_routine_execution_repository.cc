@@ -379,11 +379,11 @@ NvsRoutineExecutionRepository::NvsRoutineExecutionRepository(std::string nvs_nam
 
 bool NvsRoutineExecutionRepository::Init() {
     std::vector<RoutineExecutionId> ids = ReadExecutionIndexMigrating(nvs_namespace_);
-    WriteExecutionIndexFile(ids);
+    if (!WriteExecutionIndexFile(ids)) return false;
 
     uint32_t sequence = 0;
-    ReadExecutionSequenceMigrating(nvs_namespace_, &sequence);
-    WriteExecutionSequenceFile(nvs_namespace_, sequence);
+    if (!ReadExecutionSequenceMigrating(nvs_namespace_, &sequence) ||
+        !WriteExecutionSequenceFile(nvs_namespace_, sequence)) return false;
 
     ESP_LOGI(kTag, "Execution repository ready");
     return true;

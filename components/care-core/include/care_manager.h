@@ -55,6 +55,7 @@ public:
     CareError VerifyAdminPassword(const std::string& password, bool& valid);
 
 private:
+    friend class CareWebServer;
     CareManager() = default;
 
     CareError ValidateProfile(const CareProfile& profile) const;

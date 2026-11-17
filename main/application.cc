@@ -1,3 +1,18 @@
+#include "care_daily/care_ack_journal.h"
+#include "care_daily/care_ack_latch.h"
+#include "care_restore.h"
+#include "care_voice/reminder_audio_bridge.h"
+#if __has_include("care_telegram_private.h")
+#include "care_telegram_private.h"
+#endif
+#ifndef CARE_HELP_DEVICE_LABEL
+#define CARE_HELP_DEVICE_LABEL "CARE"
+#endif
+#include "nvs.h"
+#include "care_telegram_pair.h"
+#include "sdkconfig.h"
+#include "care_telegram_probe.h"
+#include "care_telegram_tts_config.h"
 #include "application.h"
 #include "care_radio/radio_service.h"
 #include "assets.h"
@@ -19,9 +34,112 @@
 #include <arpa/inet.h>
 #include <cJSON.h>
 #include <cstring>
+#include <ctime>
 #include <limits>
 
 #define TAG "Application"
+
+
+// DP-CF-007_HELP_TO_HA
+// Matcher V1 deliberadamente conservador: solo frases exactas.
+// Incluye "necesito ayudarme" porque fue una transcripción STT real observada.
+bool IsCareHelpRequestText(const std::string& text) {
+    // DP-CF-007_R3_HELP_NORMALIZATION
+    std::string value;
+    value.reserve(text.size());
+
+    bool previous_space = true;
+
+    auto append_char = [&](char c) {
+        if (c == ' ') {
+            if (!previous_space && !value.empty()) {
+                value.push_back(' ');
+                previous_space = true;
+            }
+            return;
+        }
+
+        value.push_back(c);
+        previous_space = false;
+    };
+
+    for (size_t i = 0; i < text.size();) {
+        const unsigned char c = static_cast<unsigned char>(text[i]);
+
+        if (c < 0x80) {
+            char out = static_cast<char>(c);
+
+            if (out >= 'A' && out <= 'Z') {
+                out = static_cast<char>(out - 'A' + 'a');
+            }
+
+            const bool is_letter_or_digit =
+                (out >= 'a' && out <= 'z') ||
+                (out >= '0' && out <= '9');
+
+            if (is_letter_or_digit) {
+                append_char(out);
+            } else {
+                append_char(' ');
+            }
+
+            ++i;
+            continue;
+        }
+
+        if (c == 0xC3 && i + 1 < text.size()) {
+            const unsigned char n = static_cast<unsigned char>(text[i + 1]);
+            char replacement = 0;
+
+            switch (n) {
+                case 0x81: case 0xA1: replacement = 'a'; break;
+                case 0x89: case 0xA9: replacement = 'e'; break;
+                case 0x8D: case 0xAD: replacement = 'i'; break;
+                case 0x93: case 0xB3: replacement = 'o'; break;
+                case 0x9A: case 0xBA: replacement = 'u'; break;
+                case 0x9C: case 0xBC: replacement = 'u'; break;
+                case 0x91: case 0xB1: replacement = 'n'; break;
+                default: break;
+            }
+
+            if (replacement != 0) {
+                append_char(replacement);
+            } else {
+                append_char(' ');
+            }
+
+            i += 2;
+            continue;
+        }
+
+        append_char(' ');
+        ++i;
+    }
+
+    while (!value.empty() && value.back() == ' ') {
+        value.pop_back();
+    }
+
+    static constexpr const char* kHelpRequests[] = {
+        "necesito ayuda",
+        "necesito ayudarme",
+        "ayudame",
+        "por favor ayudame",
+        "no me siento bien",
+        "me siento mal",
+        "llama a alguien",
+        "por favor llama a alguien",
+    };
+
+    for (const char* candidate : kHelpRequests) {
+        if (value == candidate) {
+            return true;
+        }
+    }
+
+    return false;
+}
+#include "care_homeassistant.h"
 
 // DP039_DIAGNOSTICO_LIMPIO: sólo se retiraron trazas de medición.
 // DP039_CARE_SLOW_SPEECH
@@ -128,6 +246,70 @@ void Application::Initialize() {
     audio_service_.Initialize(codec);
     audio_service_.Start();
 
+    // DP-CF-001 — Home Assistant / CARE Familia -> voz XiaoZhi.
+    xiaozhi_care::CareWebServer::GetInstance().SetFamilyMessageCallback(
+        [this](const std::string& sender, const std::string& message) -> bool {
+            return RequestCareFamilyMessageNotification(sender, message);
+        });
+
+    // Telegram consumes the server-side queue only after the finite PCM job completes.
+    xiaozhi_care::SetCareTelegramProbeReceivedCallback(
+        [this](int64_t id, const std::string& account, const std::string& message) -> bool {
+            static int64_t offered = -1;
+            static std::shared_ptr<std::atomic<int>> receipt;
+            if (receipt && offered == id) {
+                const int state = receipt->load();
+                if (state > 0) { receipt.reset(); return true; }
+                if (state == 0) return false;
+            }
+            offered = id;
+            receipt = std::make_shared<std::atomic<int>>(0);
+            Schedule([this, account, message, done = receipt]() {
+                auto& radio = xiaozhi_care::radio::RadioService::GetInstance();
+                std::string sender;
+                bool unavailable=false;
+                if (!xiaozhi_care::ResolveTelegramSender(account,sender,&unavailable)) {
+                    done->store(unavailable ? -1 : 1); // retry unavailable storage; never play a revoked account
+                    return;
+                }
+                if (GetDeviceState() != kDeviceStateIdle || notify_player_.IsBusy() ||
+                    radio.WantsPlaying() || radio.IsStreaming() || radio.OneShotActive() ||
+                    pending_telegram_cue_.cue || care_recording_active_.load() || audio_service_.HasCarePriority() ||
+                    !audio_service_.IsPlaybackIdle() ||
+                    CARE_TG_VOICERSS_KEY[0] == '\0') {
+                    done->store(-1);
+                    return;
+                }
+                auto encode = [](const std::string& value) {
+                    std::string out;
+                    for (unsigned char c : value) {
+                        if ((c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')||
+                            c=='-'||c=='_'||c=='.'||c=='~') out += char(c);
+                        else {
+                            out += '%';
+                            out += "0123456789ABCDEF"[c>>4];
+                            out += "0123456789ABCDEF"[c&15];
+                        }
+                    }
+                    return out;
+                };
+                const std::string url = std::string("https://api.voicerss.org/?key=") + encode(CARE_TG_VOICERSS_KEY) +
+                    "&hl=es-mx&v=Silvia&c=MP3&f=16khz_16bit_mono&src=" +
+                    encode("Tenés un mensaje de "+sender+". Dice: "+message);
+                auto cue = audio_service_.PlayTrackedCue(Lang::Sounds::OGG_POPUP);
+                if (!cue) { done->store(-1); return; }
+                pending_telegram_cue_ = {account,url,done,std::move(cue),
+                    esp_timer_get_time()+5000000,telegram_conversation_epoch_.load()};
+            });
+            return false;
+        });
+
+    // DP-TG-018: interfaz separada, preserva el flujo previo HA/Piper.
+    xiaozhi_care::CareWebServer::GetInstance().SetFamilyAudioCallback(
+        [this](const std::string& url) -> bool {
+            return RequestCareFamilyAudioPlayback(url);
+        });
+
     // DP042A_RADIO_MP3_BASE
     auto& care_radio =
         xiaozhi_care::radio::RadioService::GetInstance();
@@ -135,7 +317,7 @@ void Application::Initialize() {
         [this](std::vector<int16_t>& pcm,
                int sample_rate,
                int channels) -> bool {
-            return audio_service_.OutputExternalPcm(
+            return !care_recording_active_.load() && audio_service_.OutputExternalPcm(
                 pcm, sample_rate, channels);
         });
     care_radio.SetSystemPaused(
@@ -144,6 +326,14 @@ void Application::Initialize() {
     // DP043C_RADIO_FINISHING
     care_radio.SetNetworkActivityCallback([this](bool active) {
         Schedule([this, active]() {
+            // DP-CF-006: clearing family orange on audio end
+            if (!active) {
+                auto* led = Board::GetInstance().GetLed();
+                if (led != nullptr) {
+                    led->ClearCareFamilyMessage();
+                }
+            }
+
             auto& b = Board::GetInstance();
 
             if (active) {
@@ -197,6 +387,7 @@ void Application::Initialize() {
 
     // Add state change listeners
     state_machine_.AddStateChangeListener([this](DeviceState old_state, DeviceState new_state) {
+        ++telegram_conversation_epoch_;
         xEventGroupSetBits(event_group_, MAIN_EVENT_STATE_CHANGED);
     });
 
@@ -341,17 +532,16 @@ void Application::Run() {
         }
 
         if (bits & MAIN_EVENT_SEND_AUDIO) {
-            while (auto packet = audio_service_.PopPacketFromSendQueue()) {
+            unsigned remaining=8;
+            for (; remaining; --remaining) {
+                auto packet=audio_service_.PopPacketFromSendQueue();
+                if (!packet) break;
                 if (protocol_ && !protocol_->SendAudio(std::move(packet))) {
-                    // Drop the remaining packets. Leaving them in the queue would
-                    // stall the Opus codec task (it waits for queue space), which in
-                    // turn deadlocks the whole audio input pipeline, as no new
-                    // MAIN_EVENT_SEND_AUDIO event would ever be triggered again.
-                    while (audio_service_.PopPacketFromSendQueue())
-                        ;
+                    audio_service_.DiscardPendingSendAudio();
                     break;
                 }
             }
+            if (!remaining) xEventGroupSetBits(event_group_,MAIN_EVENT_SEND_AUDIO);
         }
 
         if (bits & MAIN_EVENT_WAKE_WORD_DETECTED) {
@@ -378,11 +568,18 @@ void Application::Run() {
 
         if (bits & MAIN_EVENT_SCHEDULE) {
             std::unique_lock<std::mutex> lock(mutex_);
-            auto tasks = std::move(main_tasks_);
-            lock.unlock();
-            for (auto& task : tasks) {
+            // Leave queued callbacks in FIFO order, but yield to input,
+            // transport and care events between bounded dispatch batches.
+            for (unsigned i=0; i<8 && !main_tasks_.empty(); ++i) {
+                auto task=std::move(main_tasks_.front());
+                main_tasks_.pop_front();
+                lock.unlock();
                 task();
+                lock.lock();
             }
+            const bool pending=!main_tasks_.empty();
+            lock.unlock();
+            if (pending) xEventGroupSetBits(event_group_,MAIN_EVENT_SCHEDULE);
         }
 
         if (bits & MAIN_EVENT_CLOCK_TICK) {
@@ -397,14 +594,57 @@ void Application::Run() {
                 // SystemInfo::PrintTaskCpuUsage(pdMS_TO_TICKS(1000));
             }
         }
+        // Run after input/state events: never commit a start using the prior turn.
+        AdvanceTelegramCue();
+    }
+}
+
+void Application::AdvanceTelegramCue() {
+    auto& job = pending_telegram_cue_;
+    if (!job.cue) return;
+    const auto status = audio_service_.CheckTrackedCue(*job.cue);
+    if (status == LocalPlaybackResult::Failed ||
+        esp_timer_get_time() >= job.deadline_us || GetDeviceState() != kDeviceStateIdle ||
+        job.conversation_epoch != telegram_conversation_epoch_.load() || notify_player_.IsBusy()) {
+        job.cue->Fail();
+        job.delivery->store(-1);
+        job = {};
+        return;
+    }
+    if (status != LocalPlaybackResult::Complete || !audio_service_.IsPlaybackIdle()) return;
+    auto ready = std::move(job);
+    job = {};
+    std::string name;
+    bool unavailable = false;
+    if (!xiaozhi_care::ResolveTelegramSender(ready.account,name,&unavailable)) {
+        ready.delivery->store(unavailable ? -1 : 1);
+        return;
+    }
+    auto& radio = xiaozhi_care::radio::RadioService::GetInstance();
+    if (radio.WantsPlaying() || radio.IsStreaming() || radio.OneShotActive() ||
+        care_recording_active_.load() || audio_service_.HasCarePriority() || !audio_service_.ResetExternalOutputResampler() ||
+        audio_service_.CheckTrackedCue(*ready.cue) != LocalPlaybackResult::Complete ||
+        !radio.PlayOneShotUrl(ready.audio_url,false,[done=ready.delivery](bool ok) {
+            done->store(ok ? 1 : -1);
+        }, [account=ready.account] {
+            std::string ignored;
+            return xiaozhi_care::ResolveTelegramSender(account,ignored);
+        })) {
+        ready.delivery->store(-1);
     }
 }
 
 void Application::HandleNetworkConnectedEvent() {
     ESP_LOGI(TAG, "Network connected");
+
+    // DP-049 R4.1: Telegram debe comenzar HTTPS solo despues de tener red e IP.
+    xiaozhi_care::SetCareTelegramNetworkReady(true);
+    CareHomeAssistant::GetInstance().OnNetworkConnected();
+
     auto state = GetDeviceState();
 
     if (state == kDeviceStateStarting || state == kDeviceStateWifiConfiguring) {
+
         // Network is ready, start activation
         SetDeviceState(kDeviceStateActivating);
         if (activation_task_handle_ != nullptr) {
@@ -428,6 +668,9 @@ void Application::HandleNetworkConnectedEvent() {
 }
 
 void Application::HandleNetworkDisconnectedEvent() {
+    // Pausar consultas Telegram mientras no haya conexion.
+    xiaozhi_care::SetCareTelegramNetworkReady(false);
+    CareHomeAssistant::GetInstance().OnNetworkDisconnected();
     // Close current conversation when network disconnected
     auto state = GetDeviceState();
     if (state == kDeviceStateNotifying) {
@@ -512,6 +755,12 @@ void Application::CheckAssetsVersion() {
     Settings settings("assets", true);
     // Check if there is a new assets need to be downloaded
     std::string download_url = settings.GetString("download_url");
+#if CONFIG_CARE_OTA_PROTECTION
+    if (!download_url.empty()) {
+        ESP_LOGW(TAG, "CARE ASSETS lock: pending download ignored");
+    }
+    download_url.clear();  // Keep local assets; do not alter NVS
+#endif
 
     if (!download_url.empty()) {
         settings.EraseKey("download_url");
@@ -775,7 +1024,7 @@ void Application::InitializeProtocol() {
                     if (!TextGlyphPayload::Parse(root, glyphs, bpp)) {
                         glyphs.clear();
                     }
-                    ESP_LOGI(TAG, "<< %s", text->valuestring);
+                    ESP_LOGD(TAG, "Assistant text received");
                     Schedule([display, message = std::string(text->valuestring),
                               glyphs = std::move(glyphs), bpp]() {
                         display->AddTextGlyphs(glyphs, bpp);
@@ -791,7 +1040,22 @@ void Application::InitializeProtocol() {
                 if (!TextGlyphPayload::Parse(root, glyphs, bpp)) {
                     glyphs.clear();
                 }
-                ESP_LOGI(TAG, ">> %s", text->valuestring);
+                ESP_LOGD(TAG, "Speech transcription received");
+
+                // DP-CF-007_HELP_TO_HA
+                const std::string care_stt_message(text->valuestring);
+                if (IsCareHelpRequestText(care_stt_message)) {
+                    ESP_LOGI(TAG,"Care help phrase detected");
+
+                    Schedule([message = care_stt_message]() {
+                        const bool sent =
+                            CareHomeAssistant::GetInstance().SendHelpRequest(
+                                CARE_HELP_DEVICE_LABEL,
+                                message);
+
+                        ESP_LOGI(TAG,"Care help event sent=%d",sent ? 1 : 0);
+                    });
+                }
                 Schedule([display, message = std::string(text->valuestring),
                           glyphs = std::move(glyphs), bpp]() {
                     display->AddTextGlyphs(glyphs, bpp);
@@ -834,7 +1098,7 @@ void Application::InitializeProtocol() {
 #if CONFIG_RECEIVE_CUSTOM_MESSAGE
         } else if (strcmp(type->valuestring, "custom") == 0) {
             auto payload = cJSON_GetObjectItem(root, "payload");
-            ESP_LOGI(TAG, "Received custom message: %s", cJSON_PrintUnformatted(root));
+            ESP_LOGD(TAG, "Custom message received");
             if (cJSON_IsObject(payload)) {
                 Schedule(
                     [this, display, payload_str = std::string(cJSON_PrintUnformatted(payload))]() {
@@ -878,7 +1142,7 @@ void Application::ShowActivationCode(const std::string& code, const std::string&
 
 void Application::Alert(const char* status, const char* message, const char* emotion,
                         const std::string_view& sound) {
-    ESP_LOGW(TAG, "Alert [%s] %s: %s", emotion, status, message);
+    ESP_LOGD(TAG, "Application alert rendered");
     auto display = Board::GetInstance().GetDisplay();
     display->SetStatus(status);
     display->SetEmotion(emotion);
@@ -1331,6 +1595,127 @@ void Application::HandleNotificationFinished(uint32_t playback_id, bool success)
     StopNotification();
 }
 
+
+// DP-CF-002 — CARE Familia -> Home Assistant/Piper -> MP3 -> parlante.
+bool Application::RequestCareFamilyMessageNotification(
+    const std::string& sender,
+    const std::string& message
+) {
+    if (sender.empty() || message.empty()) {
+        ESP_LOGW(TAG, "DP-CF-002: mensaje familiar vacio");
+        return false;
+    }
+
+    const std::string speech = std::string("Dice ") + sender + ": " + message;
+
+    std::string audio_url;
+    if (!CareHomeAssistant::GetInstance().GetTtsUrl(speech, audio_url)) {
+        ESP_LOGE(TAG, "DP-CF-002: no se pudo generar TTS");
+        return false;
+    }
+
+    ESP_LOGI(TAG, "DP-CF-002: mensaje familiar listo para reproducir");
+
+    Schedule([this, audio_url = std::move(audio_url)]() mutable {
+        if (GetDeviceState() != kDeviceStateIdle) {
+            ESP_LOGW(TAG, "DP-CF-003: CARE ocupado; mensaje no reproducido");
+            return;
+        }
+
+        auto& radio =
+            xiaozhi_care::radio::RadioService::GetInstance();
+
+        radio.SetSystemPaused(false);
+
+        auto* led = Board::GetInstance().GetLed();
+        if (led != nullptr) {
+            led->ShowCareFamilyMessage();
+        }
+        ESP_LOGI(TAG, "DP-CF-006: family message visual started");
+
+        if (!radio.PlayOneShotUrl(audio_url)) {
+            if (led != nullptr) {
+                led->ClearCareFamilyMessage();
+            }
+            ESP_LOGE(TAG, "DP-CF-003: no se pudo iniciar MP3 familiar");
+            return;
+        }
+
+        ESP_LOGI(TAG, "DP-CF-003: MP3 familiar enviado al reproductor");
+    });
+
+    return true;
+}
+
+
+// DP-TG-018 - Solo ensayos manuales con CARE inactivo y radio apagada.
+// Que se acepte una solicitud NO equivale a haber reproducido el MP3.
+bool Application::RequestCareFamilyAudioPlayback(const std::string& audio_url) {
+    auto& radio = xiaozhi_care::radio::RadioService::GetInstance();
+    if (audio_url.empty() || GetDeviceState() != kDeviceStateIdle ||
+        notify_player_.IsBusy() || radio.WantsPlaying() || radio.IsStreaming()) {
+        ESP_LOGW(TAG, "DP-TG-018: CARE ocupado; solicitud rechazada");
+        return false;
+    }
+
+    Schedule([this, audio_url]() {
+        auto& radio = xiaozhi_care::radio::RadioService::GetInstance();
+        // Revalidar: el estado pudo cambiar antes de ejecutar el trabajo.
+        if (GetDeviceState() != kDeviceStateIdle || notify_player_.IsBusy() ||
+            radio.WantsPlaying() || radio.IsStreaming()) {
+            ESP_LOGW(TAG, "DP-TG-018: CARE se ocupo; audio no iniciado");
+            return;
+        }
+        auto* led = Board::GetInstance().GetLed();
+        if (led != nullptr) {
+            led->ShowCareFamilyMessage();
+        }
+        if (!radio.PlayOneShotUrl(audio_url, false)) {
+            if (led != nullptr) {
+                led->ClearCareFamilyMessage();
+            }
+            ESP_LOGE(TAG, "DP-TG-018: fallo de inicio de MP3");
+            return;
+        }
+        ESP_LOGI(TAG, "DP-TG-018: solicitud MP3 enviada al reproductor");
+    });
+    return true;
+}
+
+bool Application::RequestCareFamilyMessageTrigger() {
+    Schedule([this]() {
+        const DeviceState state = GetDeviceState();
+        if (state == kDeviceStateSpeaking) AbortSpeaking(kAbortReasonNone);
+        if (protocol_ == nullptr) {
+            ESP_LOGW(TAG, "DP-CF-001: protocolo XiaoZhi no disponible");
+            return;
+        }
+        if (state == kDeviceStateListening && protocol_->IsAudioChannelOpened()) {
+            protocol_->SendStopListening();
+        }
+        if (state == kDeviceStateListening || state == kDeviceStateSpeaking ||
+            state == kDeviceStateConnecting) {
+            SetDeviceState(kDeviceStateIdle);
+        }
+        if (!protocol_->IsAudioChannelOpened()) {
+            if (SetDeviceState(kDeviceStateConnecting) && protocol_->OpenAudioChannel()) {
+                SetDeviceState(kDeviceStateIdle);
+            } else if (GetDeviceState() == kDeviceStateConnecting) {
+                SetDeviceState(kDeviceStateIdle);
+            }
+        }
+        if (!protocol_->IsAudioChannelOpened()) {
+            ESP_LOGW(TAG, "DP-CF-001: no se pudo abrir canal para mensaje familiar");
+            return;
+        }
+        listening_mode_ = kListeningModeManualStop;
+        const bool sent = protocol_->SendTextInput("Mensaje familiar.");
+        ESP_LOGI(TAG, "DP-CF-001: trigger mensaje familiar enviado=%d", sent ? 1 : 0);
+    });
+    return true;
+}
+
+
 void Application::Schedule(std::function<void()>&& callback) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -1479,6 +1864,12 @@ void Application::Reboot() {
 }
 
 bool Application::UpgradeFirmware(const std::string& url, const std::string& version) {
+#if CONFIG_CARE_OTA_PROTECTION
+    (void)url;
+    (void)version;
+    ESP_LOGW(TAG, "CARE OTA lock: firmware upgrade refused");
+    return false;
+#endif
     auto& board = Board::GetInstance();
     auto display = board.GetDisplay();
 
@@ -1494,7 +1885,7 @@ bool Application::UpgradeFirmware(const std::string& url, const std::string& ver
         ESP_LOGI(TAG, "Closing audio channel before firmware upgrade");
         protocol_->CloseAudioChannel();
     }
-    ESP_LOGI(TAG, "Starting firmware upgrade from URL: %s", upgrade_url.c_str());
+    ESP_LOGI(TAG, "Starting firmware upgrade");
 
     Alert(Lang::Strings::OTA_UPGRADE, Lang::Strings::UPGRADING, "download",
           Lang::Sounds::OGG_UPGRADE);
@@ -1630,61 +2021,156 @@ void Application::SetAecMode(AecMode mode) {
     });
 }
 
+namespace {
+using xiaozhi_care::daily::CareAckJournal;
+xiaozhi_care::daily::CareAckLatch care_receipt;
+
+bool ReadAckValue(nvs_handle_t h, const char* name, size_t limit, std::string& value) {
+    value.clear();
+    size_t size=0;
+    auto err=nvs_get_str(h,name,nullptr,&size);
+    if (err==ESP_ERR_NVS_NOT_FOUND) return true;
+    if (err!=ESP_OK || !size || size>limit+1) return false;
+    value.resize(size);
+    if (nvs_get_str(h,name,value.data(),&size)!=ESP_OK || !size || value[size-1]!='\0') return false;
+    value.resize(size-1);
+    return true;
+}
+
+bool CheckOrSaveAck(const std::string& key, bool write) {
+    const auto sep=key.find('|');
+    if (sep==std::string::npos ||
+        key.substr(0,sep)!=std::to_string(xiaozhi_care::restore::Active().data)) return false;
+    const auto date=std::string_view(key).substr(sep+1,10);
+    if (write) {
+        const std::time_t now=std::time(nullptr);
+        std::tm tm{};
+        char current[11]{};
+        if (!localtime_r(&now,&tm) || std::strftime(current,sizeof(current),"%Y-%m-%d",&tm)!=10 ||
+            date!=current) return false;
+    }
+    nvs_handle_t h;
+    const auto err=nvs_open("care_ack",write ? NVS_READWRITE : NVS_READONLY,&h);
+    if (!write && err==ESP_ERR_NVS_NOT_FOUND) return CareAckJournal::CanAccept({},date,key);
+    if (err!=ESP_OK) return false;
+    std::string journal,legacy;
+    bool ok=ReadAckValue(h,"v3_day",CareAckJournal::kMaxBytes,journal) &&
+        ReadAckValue(h,"latest",CareAckJournal::kMaxKey,legacy) && legacy!=key &&
+        CareAckJournal::CanAccept(journal,date,key);
+    if (ok && write) {
+        ok=CareAckJournal::Append(journal,date,key) &&
+            nvs_set_str(h,"v3_day",journal.c_str())==ESP_OK && nvs_commit(h)==ESP_OK;
+    }
+    nvs_close(h);
+    return ok;
+}
+}
+extern "C" void xiaozhi_care_alarm_arm_receipt(const char* date, const char* routine) {
+    std::string key;
+    if (date && routine && *routine) {
+        key = std::to_string(xiaozhi_care::restore::Active().data) + "|" + date + "|" + routine;
+        if (!CheckOrSaveAck(key,false)) key.clear();
+    }
+    care_receipt.Arm(std::move(key),esp_timer_get_time(),date ? date : "");
+}
+uint64_t Application::CaptureCareReceipt() {
+    return care_receipt.Capture(esp_timer_get_time());
+}
+void Application::ConfirmCareReceipt(uint64_t press) {
+    // Keep flash writes out of the dispatcher. At most one write job exists.
+    static std::atomic<bool> busy{false};
+    if (!press || busy.exchange(true)) return;
+    auto value=std::make_unique<uint64_t>(press);
+    auto* payload=value.release();
+    if (xTaskCreate([](void* arg) {
+        {
+            std::unique_ptr<uint64_t> press_id(static_cast<uint64_t*>(arg));
+            if (care_receipt.Accept(*press_id,esp_timer_get_time(),[](const std::string& key) {
+                return CheckOrSaveAck(key,true);
+            })) ESP_LOGI(TAG,"Physical receipt saved");
+        }
+        busy.store(false);
+        vTaskDelete(nullptr);
+    },"care_ack",4096,payload,3,nullptr)!=pdPASS) {
+        delete payload;
+        busy.store(false);
+        ESP_LOGW(TAG,"Physical receipt not saved: worker unavailable");
+    }
+}
+
+bool Application::PlayCareSignal() {
+    return audio_service_.PlayCareSignal();
+}
+
+extern "C" bool xiaozhi_care_alarm_render_signal() {
+    return Application::GetInstance().PlayCareSignal();
+}
+
 void Application::PlaySound(const std::string_view& sound) { audio_service_.PlaySound(sound); }
 
 // DP040B_FASE2B_STRONG_AUDIO_HOOK
 //
 // Implementación FUERTE del puente que care-voice declara como weak.
 // El runtime de DP-040B llama a xiaozhi_care_reminder_audio_notify(); esta
-// implementación copia el OGG y agenda la reproducción en el task principal.
-bool Application::RequestCareReminderAudio(const std::string& target_id,
+// implementación copia el OGG y lo envía a un único worker de grabaciones.
+bool Application::RequestCareReminderAudio(const std::string&,
                                            const std::string& message,
                                            const uint8_t* audio_data,
-                                           size_t audio_size) {
-    if (audio_data == nullptr || audio_size == 0) {
-        ESP_LOGW(TAG,
-                 "Care reminder audio ignored: empty audio target=%s",
-                 target_id.c_str());
+                                           size_t audio_size,
+                                           std::shared_ptr<std::atomic<int>> result) {
+    if (!audio_data || !audio_size || audio_size>32*1024 || GetDeviceState()!=kDeviceStateIdle ||
+        care_recording_active_.exchange(true)) return false;
+
+    struct Work {
+        Application* app;
+        uint32_t epoch;
+        std::string audio;
+        std::shared_ptr<std::atomic<int>> result;
+    };
+    // A standalone recording has no verified CareAlarm occurrence. It
+    // must not leave a prior occurrence armed while presenting another one.
+    if (result) care_receipt.Arm({},esp_timer_get_time());
+    const auto epoch=telegram_conversation_epoch_.load();
+    auto work=std::make_unique<Work>(Work{this,epoch,
+        std::string(reinterpret_cast<const char*>(audio_data),audio_size),std::move(result)});
+    auto* payload=work.release();
+    if (xTaskCreate([](void* ptr) {
+        {
+            std::unique_ptr<Work> job(static_cast<Work*>(ptr));
+            auto* app=job->app;
+            const auto deadline=esp_timer_get_time()+120000000LL;
+            const auto valid=[&] {
+                return app->GetDeviceState()==kDeviceStateIdle &&
+                    app->telegram_conversation_epoch_.load()==job->epoch &&
+                    esp_timer_get_time()<deadline;
+            };
+            auto receipt=valid() ? app->audio_service_.PlayTrackedCue(job->audio,valid) : nullptr;
+            bool complete=false;
+            while (receipt && valid()) {
+                const auto status=app->audio_service_.CheckTrackedCue(*receipt);
+                if (status!=LocalPlaybackResult::Pending) {
+                    complete=status==LocalPlaybackResult::Complete;
+                    break;
+                }
+                vTaskDelay(1);
+            }
+            if (receipt && !complete) receipt->Fail();
+            if (job->result) job->result->store(complete ? 1 : -1);
+            app->care_recording_active_.store(false);
+        }
+        vTaskDelete(nullptr);
+    },"care_ogg",4096,payload,4,nullptr)!=pdPASS) {
+        delete payload;
+        care_recording_active_.store(false);
         return false;
     }
 
-    const DeviceState state = GetDeviceState();
-    if (state != kDeviceStateIdle) {
-        ESP_LOGW(TAG,
-                 "Care reminder audio deferred because device is busy: state=%d target=%s",
-                 static_cast<int>(state),
-                 target_id.c_str());
-        return false;
-    }
-
-    std::string audio_copy(reinterpret_cast<const char*>(audio_data), audio_size);
     const std::string safe_message =
         message.empty() ? "Recordatorio" : message;
 
-    Schedule([this,
-              target_id,
-              safe_message,
-              audio = std::move(audio_copy)]() mutable {
-        if (GetDeviceState() != kDeviceStateIdle) {
-            ESP_LOGW(TAG,
-                     "Care reminder audio skipped in main task because device became busy: target=%s",
-                     target_id.c_str());
-            return;
-        }
-
-        care_reminder_audio_cache_ = std::move(audio);
-
-        ESP_LOGI(TAG,
-                 "Care reminder audio presented: target=%s bytes=%u message=%s",
-                 target_id.c_str(),
-                 static_cast<unsigned>(care_reminder_audio_cache_.size()),
-                 safe_message.c_str());
-
-        Alert("XiaoZhi Care",
-              safe_message.c_str(),
-              "neutral",
-              std::string_view(care_reminder_audio_cache_.data(),
-                               care_reminder_audio_cache_.size()));
+    Schedule([this,safe_message,epoch]() {
+        if (GetDeviceState()!=kDeviceStateIdle || telegram_conversation_epoch_.load()!=epoch) return;
+        Alert("XiaoZhi Care",safe_message.c_str(),"neutral");
 
         // DP040C_OLED_AUTO_RETURN
         // El Alert() deja el texto del recordatorio en pantalla. Lo mantenemos
@@ -1748,21 +2234,10 @@ extern "C" bool xiaozhi_care_reminder_audio_notify(
     const char* target_id,
     const char* message,
     const uint8_t* audio_data,
-    size_t audio_size) {
-    const char* safe_target = target_id ? target_id : "";
-    const char* safe_message = message ? message : "";
-
-    ESP_LOGI(TAG,
-             "Care reminder audio hook requested: target=%s bytes=%u message=%s",
-             safe_target,
-             static_cast<unsigned>(audio_size),
-             safe_message);
-
+    size_t audio_size,
+    std::shared_ptr<std::atomic<int>> result) {
     return Application::GetInstance().RequestCareReminderAudio(
-        std::string(safe_target),
-        std::string(safe_message),
-        audio_data,
-        audio_size);
+        target_id ? target_id : "",message ? message : "",audio_data,audio_size,std::move(result));
 }
 
 

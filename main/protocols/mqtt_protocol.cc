@@ -1,3 +1,4 @@
+#include "ws_audio_frame.h"
 #include "mqtt_protocol.h"
 #include "application.h"
 #include "board.h"
@@ -145,7 +146,7 @@ bool MqttProtocol::StartMqttClient(bool report_error) {
             on_incoming_json_(root);
         }
         cJSON_Delete(root);
-        last_incoming_time_ = std::chrono::steady_clock::now();
+        MarkIncoming();
     });
 
     std::string broker_address;
@@ -351,7 +352,7 @@ bool MqttProtocol::OpenAudioChannel() {
             }
             remote_sequence_ = sequence;
         }
-        last_incoming_time_ = std::chrono::steady_clock::now();
+        MarkIncoming();
         if (on_incoming_audio_ != nullptr) {
             on_incoming_audio_(std::move(packet));
         }
@@ -416,13 +417,17 @@ void MqttProtocol::ParseServerHello(const cJSON* root) {
     auto audio_params = cJSON_GetObjectItem(root, "audio_params");
     if (cJSON_IsObject(audio_params)) {
         auto sample_rate = cJSON_GetObjectItem(audio_params, "sample_rate");
-        if (cJSON_IsNumber(sample_rate)) {
-            server_sample_rate_ = sample_rate->valueint;
+        auto duration = cJSON_GetObjectItem(audio_params, "frame_duration");
+        const int rate = sample_rate && cJSON_IsNumber(sample_rate) ? sample_rate->valueint : server_sample_rate_;
+        const int ms = duration && cJSON_IsNumber(duration) ? duration->valueint : server_frame_duration_;
+        if ((sample_rate && (!cJSON_IsNumber(sample_rate) || sample_rate->valuedouble != rate)) ||
+            (duration && (!cJSON_IsNumber(duration) || duration->valuedouble != ms)) ||
+            !care_protocol::ValidOpusParams(rate,ms)) {
+            ESP_LOGW(TAG, "Unsupported server Opus parameters");
+            return;
         }
-        auto frame_duration = cJSON_GetObjectItem(audio_params, "frame_duration");
-        if (cJSON_IsNumber(frame_duration)) {
-            server_frame_duration_ = frame_duration->valueint;
-        }
+        server_sample_rate_ = rate;
+        server_frame_duration_ = ms;
     }
 
     auto udp = cJSON_GetObjectItem(root, "udp");

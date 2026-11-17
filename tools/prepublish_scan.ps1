@@ -55,7 +55,7 @@ Get-ChildItem -LiteralPath $Root -Recurse -Force -File | Where-Object {
         $content = Get-Content -LiteralPath $f.FullName -Raw -ErrorAction Stop
         foreach ($p in $hardPatterns) {
             if ($content -match $p) {
-                $errors.Add("Possible secret: " + $f.FullName + " [" + $p + "]")
+                $errors.Add("Possible secret: "REDACTED_DP048" [" + $p + "]")
             }
         }
         foreach ($p in $reviewPatterns) {
