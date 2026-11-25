@@ -22,6 +22,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include <functional>
 
 struct cJSON;
 
@@ -65,6 +66,16 @@ public:
     // Encola un texto para enviarlo cuando el equipo esté libre (no bloquea).
     // Si chat_id está vacío va al administrador. Se puede llamar desde cualquier tarea.
     void QueueMessage(const std::string& text, const std::string& chat_id = "");
+
+    // Extensiones (por ejemplo, la lista de compras del equipo de mamá).
+    // Comando extra del administrador: devuelve true si lo manejó y completa el texto de respuesta
+    // y, opcionalmente, botones (reply_markup en JSON).
+    using ComandoExtra = std::function<bool(const std::string& cmd, const std::string& arg,
+                                            std::string& texto, std::string& botones)>;
+    // Botón extra (callback_data): devuelve true si lo manejó.
+    using BotonExtra = std::function<bool(const std::string& data, std::string& texto, std::string& botones)>;
+    void AddAdminCommand(ComandoExtra f, const std::string& ayuda);
+    void AddCallbackHandler(BotonExtra f);
 
 private:
     TelegramBot() = default;
@@ -123,6 +134,9 @@ private:
     long long offset_ = 0;
     std::vector<std::string> allowed_chat_ids_;
     std::string default_chat_id_;
+    std::vector<ComandoExtra> comandos_extra_;
+    std::vector<std::string> ayuda_extra_;
+    std::vector<BotonExtra> botones_extra_;
 
     std::mutex http_mutex_;   // una sola conexión TLS a la vez (ahorra RAM)
     std::mutex data_mutex_;   // protege recent_ y announce_pending_

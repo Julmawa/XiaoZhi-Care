@@ -64,6 +64,7 @@ private:
     std::string recordatorios_ = "[]";
     std::string pastillero_ = "{}";
     std::string ajustes_ = "{}";
+    std::string compras_ = "[]";
     httpd_handle_t servidor_ = nullptr;
     std::function<std::string()> presencia_;
     std::function<int()> radar_;
@@ -136,6 +137,13 @@ private:
     int64_t noticias_intento_ms_ = 0;    // último intento
     void ActualizarNoticias(int64_t ahora_ms);
     std::string TextoNoticias();
+
+    // ---- Lista de compras (ella la arma con la voz; Julio la pide con /compras)
+    std::string AgregarCompras(const std::string& items);
+    std::string QuitarCompra(const std::string& item);
+    std::string TextoCompras(bool para_telegram);
+    void VaciarCompras();
+    void RegistrarComprasTelegram();
 
     // Almacenamiento
     void IniciarAlmacenamiento();

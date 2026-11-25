@@ -208,6 +208,19 @@
       Si está dormida o no está en la pieza, espera a que vuelva.</p>
     <div id="listaRecordatorios"></div>
     <button class="boton agregar" onclick="editarRecordatorio(-1)">＋ Agregar recordatorio</button>
+
+    <div class="tarjeta" style="margin-top:18px">
+      <div class="grupo-tit"><span class="ico">🛒</span>Lista de compras</div>
+      <div class="sub">Mamá la arma hablándole a XiaoZhi (<i>"me falta harina"</i>).
+        Vos la ves por Telegram con <b>/compras</b>.</div>
+      <div id="listaCompras"></div>
+      <div class="frase" style="margin-top:10px">
+        <input type="text" id="nuevaCompra" placeholder="Agregar a mano, ej.: yerba"
+          onkeydown="if(event.key==='Enter')agregarCompra()">
+        <button type="button" class="btn-ico" onclick="agregarCompra()" title="Agregar">＋</button>
+      </div>
+      <div class="atajos"><button type="button" onclick="vaciarCompras()">Vaciar la lista (ya compré todo)</button></div>
+    </div>
   </section>
 
   <!-- ===================== PASTILLERO ===================== -->
@@ -264,12 +277,13 @@ const AJUSTES_BASE = {
   radios: [],
   volumen: 70,
 };
-let datos = { familia: [], recordatorios: [], pastillero: { franjas: {} }, ajustes: {} };
+let datos = { familia: [], recordatorios: [], pastillero: { franjas: {} }, ajustes: {}, compras: [] };
 let estadoEquipo = {};
 let modoDemo = false;
 let casilleroSel = null;
 
 const DEMO = {
+  compras: [{ item: "harina", fecha: "25/11" }, { item: "yerba", fecha: "25/11" }],
   familia: [
     { nombre: "Julio", apodo: "Julito", parentesco: "Hijo", telefono: "11 5555-1234",
       direccion: "Av. Rivadavia 1234, Caballito", cumple: "15/03", notas: "La visita los domingos" },
@@ -310,6 +324,7 @@ async function cargar() {
     datos.recordatorios = d.recordatorios || [];
     datos.pastillero = d.pastillero || { franjas: {} };
     datos.ajustes = d.ajustes || {};
+    datos.compras = d.compras || [];
     estadoEquipo = d.estado || {};
     mostrarEstado(estadoEquipo);
   } catch (e) {
@@ -334,6 +349,7 @@ function normalizar() {
   }
   if (!Array.isArray(datos.familia)) datos.familia = [];
   if (!Array.isArray(datos.recordatorios)) datos.recordatorios = [];
+  if (!Array.isArray(datos.compras)) datos.compras = [];
   if (!datos.pastillero || typeof datos.pastillero !== "object") datos.pastillero = {};
   if (!datos.pastillero.franjas || typeof datos.pastillero.franjas !== "object") datos.pastillero.franjas = {};
   for (const f of FRANJAS) {
@@ -429,7 +445,7 @@ document.querySelectorAll("nav button").forEach(b => b.addEventListener("click",
   window.scrollTo(0, 0);
 }));
 
-function dibujarTodo() { dibujarFamilia(); dibujarRecordatorios(); dibujarPastillero(); dibujarAjustes(); }
+function dibujarTodo() { dibujarFamilia(); dibujarRecordatorios(); dibujarCompras(); dibujarPastillero(); dibujarAjustes(); }
 
 // ------------------------------------------------------------------
 // 1) Familia
@@ -521,6 +537,35 @@ function dibujarRecordatorios() {
         <button class="btn-ico" onclick="editarRecordatorio(${i})" title="Editar">✏️</button>
       </div>
     </div></div>`).join("");
+}
+
+function dibujarCompras() {
+  const cont = document.getElementById("listaCompras");
+  if (!datos.compras.length) { cont.innerHTML = '<div class="dato sub">La lista está vacía.</div>'; return; }
+  cont.innerHTML = datos.compras.map((c, i) => `
+    <div class="med fila">
+      <div class="cuerpo"><div class="titulo" style="font-size:17px">${esc(c.item)}</div>
+        ${c.fecha ? `<div class="sub">anotado el ${esc(c.fecha)}</div>` : ""}</div>
+      <button class="btn-ico" onclick="quitarCompra(${i})" title="Quitar">🗑️</button>
+    </div>`).join("");
+}
+function agregarCompra() {
+  const v = val("nuevaCompra");
+  if (!v) return;
+  const hoy = new Date();
+  const fecha = String(hoy.getDate()).padStart(2, "0") + "/" + String(hoy.getMonth() + 1).padStart(2, "0");
+  datos.compras.push({ item: v, fecha });
+  document.getElementById("nuevaCompra").value = "";
+  dibujarCompras(); guardar("compras");
+}
+function quitarCompra(i) {
+  datos.compras.splice(i, 1);
+  dibujarCompras(); guardar("compras");
+}
+function vaciarCompras() {
+  if (!datos.compras.length || !confirm("¿Vaciar la lista de compras?")) return;
+  datos.compras = [];
+  dibujarCompras(); guardar("compras");
 }
 
 function editarRecordatorio(i) {
@@ -872,7 +917,7 @@ function exportarCopia() {
   const copia = {
     schema: "xiaozhi-madre-backup", version: 1, fecha: new Date().toISOString(),
     familia: datos.familia, recordatorios: datos.recordatorios,
-    pastillero: datos.pastillero, ajustes: datos.ajustes,
+    pastillero: datos.pastillero, ajustes: datos.ajustes, compras: datos.compras,
   };
   const blob = new Blob([JSON.stringify(copia, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
@@ -949,7 +994,7 @@ function convertirCopiaVieja(c) {
   if (d.radio_stations && Array.isArray(d.radio_stations.items)) {
     ajustes.radios = d.radio_stations.items.map(r => ({ nombre: r.name || "", url: r.url || "" }));
   }
-  return { familia, recordatorios, pastillero, ajustes, repetidos };
+  return { familia, recordatorios, pastillero, ajustes, compras: datos.compras, repetidos };
 }
 
 function leerCopia(input) {
@@ -963,7 +1008,7 @@ function leerCopia(input) {
     let nuevo;
     if (c.schema === "xiaozhi-madre-backup") {
       nuevo = { familia: c.familia || [], recordatorios: c.recordatorios || [],
-                pastillero: c.pastillero || { franjas: {} }, ajustes: c.ajustes || {} };
+                pastillero: c.pastillero || { franjas: {} }, ajustes: c.ajustes || {}, compras: c.compras || [] };
     } else if (c.schema === "xiaozhi-care-backup") {
       nuevo = convertirCopiaVieja(c);
     } else {
@@ -1008,12 +1053,13 @@ async function aplicarImportacion() {
   datos.recordatorios = n.recordatorios;
   datos.pastillero = n.pastillero;
   datos.ajustes = n.ajustes;
+  datos.compras = n.compras || [];
   delete n.repetidos;
   normalizar();
   cerrarModal();
   dibujarTodo();
   if (modoDemo) { aviso("Vista previa: importado sólo en pantalla"); return; }
-  for (const s of ["familia", "recordatorios", "pastillero", "ajustes"]) {
+  for (const s of ["familia", "recordatorios", "pastillero", "ajustes", "compras"]) {
     await guardar(s);
   }
   aviso("✓ Copia importada y guardada en el XiaoZhi");

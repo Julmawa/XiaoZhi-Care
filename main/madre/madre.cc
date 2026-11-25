@@ -146,6 +146,7 @@ void Madre::Start() {
     AplicarAjustes();
     IniciarReloj();
     RegistrarHerramientas();
+    RegistrarComprasTelegram();
     ultima_senal_ms_ = esp_timer_get_time() / 1000;
     // 12 KB: las noticias usan HTTPS (mbedtls) y necesitan bastante pila
     xTaskCreate(&Madre::TareaEntrada, "madre", 12288, this, 2, nullptr);
@@ -234,6 +235,7 @@ void Madre::IniciarAlmacenamiento() {
     recordatorios_ = Leer("recordat", "[]");
     pastillero_ = Leer("pastill", "{}");
     ajustes_ = Leer("ajustes", "{}");
+    compras_ = Leer("compras", "[]");
     ESP_LOGI(TAG, "Datos cargados (%s): familia %u B, recordatorios %u B, pastillero %u B, ajustes %u B",
              particion_.c_str(), (unsigned)familia_.size(), (unsigned)recordatorios_.size(),
              (unsigned)pastillero_.size(), (unsigned)ajustes_.size());
@@ -276,6 +278,7 @@ std::string* Madre::Campo(const std::string& seccion, const char** clave_nvs, bo
     if (seccion == "recordatorios") { *clave_nvs = "recordat"; *es_lista = true;  return &recordatorios_; }
     if (seccion == "pastillero")    { *clave_nvs = "pastill";  *es_lista = false; return &pastillero_; }
     if (seccion == "ajustes")       { *clave_nvs = "ajustes";  *es_lista = false; return &ajustes_; }
+    if (seccion == "compras")       { *clave_nvs = "compras";  *es_lista = true;  return &compras_; }
     return nullptr;
 }
 
@@ -347,7 +350,8 @@ void Madre::IniciarServidor() {
     config.handler = &Madre::ConfigHandler;
     httpd_register_uri_handler(servidor_, &config);
 
-    static const char* const kSecciones[] = {"/api/familia", "/api/recordatorios", "/api/pastillero", "/api/ajustes"};
+    static const char* const kSecciones[] = {"/api/familia", "/api/recordatorios", "/api/pastillero",
+                                             "/api/ajustes", "/api/compras"};
     for (const char* uri : kSecciones) {
         httpd_uri_t g = {};
         g.uri = uri;
@@ -371,7 +375,8 @@ int Madre::ConfigHandler(httpd_req_t* req) {
     {
         std::lock_guard<std::mutex> lock(m.mutex_);
         json = "{\"familia\":" + m.familia_ + ",\"recordatorios\":" + m.recordatorios_ +
-               ",\"pastillero\":" + m.pastillero_ + ",\"ajustes\":" + m.ajustes_;
+               ",\"pastillero\":" + m.pastillero_ + ",\"ajustes\":" + m.ajustes_ +
+               ",\"compras\":" + m.compras_;
     }
     json += ",\"estado\":" + m.EstadoJson() + "}";
     httpd_resp_set_type(req, "application/json; charset=utf-8");
@@ -637,7 +642,7 @@ void Madre::RevisarBienestar(int64_t ahora) {
         time_t t = time(nullptr) - (time_t)(hace_ms / 1000);
         struct tm tm;
         localtime_r(&t, &tm);
-        char buf[16];
+        char buf[32];
         snprintf(buf, sizeof(buf), "%02d:%02d", tm.tm_hour, tm.tm_min);
         return std::string(buf);
     };
@@ -667,7 +672,7 @@ void Madre::RevisarAgenda(int64_t ahora) {
     int minuto = tm.tm_hour * 60 + tm.tm_min;
     if (minuto == ultimo_minuto_) return;
     ultimo_minuto_ = minuto;
-    char hhmm[8];
+    char hhmm[32];
     snprintf(hhmm, sizeof(hhmm), "%02d:%02d", tm.tm_hour, tm.tm_min);
     int hoy = DiaPaginaHoy();
 
@@ -1034,6 +1039,190 @@ std::string Madre::TextoNoticias() {
 }
 
 // ----------------------------------------------------------------------------
+// Lista de compras
+// ----------------------------------------------------------------------------
+namespace {
+
+// "Harina " -> "harina" ; quita acentos para comparar
+std::string ClaveCompra(const std::string& s) {
+    static const char* const kAcentos[][2] = {{"á", "a"}, {"é", "e"}, {"í", "i"}, {"ó", "o"}, {"ú", "u"},
+                                              {"Á", "a"}, {"É", "e"}, {"Í", "i"}, {"Ó", "o"}, {"Ú", "u"},
+                                              {"ü", "u"}, {"Ü", "u"}, {"ñ", "n"}, {"Ñ", "n"}};
+    std::string r = s;
+    for (auto& a : kAcentos) {
+        size_t p;
+        while ((p = r.find(a[0])) != std::string::npos) r.replace(p, strlen(a[0]), a[1]);
+    }
+    std::string limpio;
+    for (char c : r) {
+        if (c >= 'A' && c <= 'Z') c = c - 'A' + 'a';
+        if (c == ' ' && (limpio.empty() || limpio.back() == ' ')) continue;
+        limpio += c;
+    }
+    while (!limpio.empty() && limpio.back() == ' ') limpio.pop_back();
+    return limpio;
+}
+
+std::string Recortar(const std::string& s) {
+    size_t a = s.find_first_not_of(" \t\r\n.");
+    if (a == std::string::npos) return "";
+    size_t b = s.find_last_not_of(" \t\r\n.");
+    return s.substr(a, b - a + 1);
+}
+
+}  // namespace
+
+std::string Madre::AgregarCompras(const std::string& items) {
+    // Separar por comas y por " y "
+    std::vector<std::string> nuevos;
+    std::string resto = items;
+    size_t p;
+    while ((p = resto.find(" y ")) != std::string::npos) resto.replace(p, 3, ",");
+    size_t inicio = 0;
+    while (inicio <= resto.size()) {
+        size_t coma = resto.find(',', inicio);
+        std::string it = Recortar(resto.substr(inicio, coma == std::string::npos ? std::string::npos : coma - inicio));
+        if (!it.empty()) nuevos.push_back(it);
+        if (coma == std::string::npos) break;
+        inicio = coma + 1;
+    }
+    if (nuevos.empty()) return "No entendí qué hay que anotar.";
+
+    char fecha[32] = "";
+    if (RelojEnHora()) {
+        time_t t = time(nullptr);
+        struct tm tm;
+        localtime_r(&t, &tm);
+        snprintf(fecha, sizeof(fecha), "%02d/%02d", tm.tm_mday, tm.tm_mon + 1);
+    }
+
+    std::string agregados, ya_estaban, lista;
+    int total = 0;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        cJSON* raiz = cJSON_Parse(compras_.c_str());
+        if (!cJSON_IsArray(raiz)) { cJSON_Delete(raiz); raiz = cJSON_CreateArray(); }
+        for (auto& n : nuevos) {
+            bool existe = false;
+            const cJSON* e;
+            cJSON_ArrayForEach(e, raiz) {
+                if (ClaveCompra(Str(e, "item")) == ClaveCompra(n)) { existe = true; break; }
+            }
+            if (existe) { ya_estaban += (ya_estaban.empty() ? "" : ", ") + n; continue; }
+            if (cJSON_GetArraySize(raiz) >= 60) break;
+            cJSON* o = cJSON_CreateObject();
+            cJSON_AddStringToObject(o, "item", n.c_str());
+            cJSON_AddStringToObject(o, "fecha", fecha);
+            cJSON_AddItemToArray(raiz, o);
+            agregados += (agregados.empty() ? "" : ", ") + n;
+        }
+        total = cJSON_GetArraySize(raiz);
+        char* txt = cJSON_PrintUnformatted(raiz);
+        if (txt) {
+            std::string nuevo = txt;
+            cJSON_free(txt);
+            if (!agregados.empty()) {
+                compras_ = nuevo;
+                Guardar("compras", nuevo);
+            }
+        }
+        cJSON_Delete(raiz);
+    }
+    ESP_LOGI(TAG, "Compras: agregado [%s] ya estaban [%s]", agregados.c_str(), ya_estaban.c_str());
+    std::string r;
+    if (!agregados.empty()) r += "Anotado en la lista de compras: " + agregados + ". ";
+    if (!ya_estaban.empty()) r += "Ya estaba en la lista: " + ya_estaban + ". ";
+    r += "La lista tiene " + std::to_string(total) + (total == 1 ? " cosa." : " cosas.");
+    r += " (Julio la ve por Telegram cuando va a hacer las compras.)";
+    return r;
+}
+
+std::string Madre::QuitarCompra(const std::string& item) {
+    std::string buscado = ClaveCompra(Recortar(item));
+    if (buscado.empty()) return "No entendí qué hay que sacar.";
+    std::string quitados;
+    std::lock_guard<std::mutex> lock(mutex_);
+    cJSON* raiz = cJSON_Parse(compras_.c_str());
+    if (!cJSON_IsArray(raiz)) { cJSON_Delete(raiz); return "La lista de compras está vacía."; }
+    for (int i = cJSON_GetArraySize(raiz) - 1; i >= 0; i--) {
+        std::string actual = Str(cJSON_GetArrayItem(raiz, i), "item");
+        std::string clave = ClaveCompra(actual);
+        if (clave == buscado || clave.find(buscado) != std::string::npos || buscado.find(clave) != std::string::npos) {
+            quitados += (quitados.empty() ? "" : ", ") + actual;
+            cJSON_DeleteItemFromArray(raiz, i);
+        }
+    }
+    if (!quitados.empty()) {
+        char* txt = cJSON_PrintUnformatted(raiz);
+        if (txt) {
+            std::string nuevo = txt;
+            cJSON_free(txt);
+            compras_ = nuevo;
+            Guardar("compras", nuevo);
+        }
+    }
+    cJSON_Delete(raiz);
+    return quitados.empty() ? "Eso no estaba en la lista de compras." : "Saqué de la lista: " + quitados + ".";
+}
+
+std::string Madre::TextoCompras(bool para_telegram) {
+    cJSON* raiz = cJSON_Parse(GetSeccion("compras").c_str());
+    std::string s;
+    int n = 0;
+    const cJSON* e;
+    cJSON_ArrayForEach(e, raiz) {
+        std::string item = Str(e, "item"), fecha = Str(e, "fecha");
+        if (item.empty()) continue;
+        n++;
+        s += (para_telegram ? "• " : "- ") + item;
+        if (para_telegram && !fecha.empty()) s += "  (" + fecha + ")";
+        s += "\n";
+    }
+    cJSON_Delete(raiz);
+    if (n == 0) return para_telegram ? "🛒 La lista de compras de mamá está vacía." : "La lista de compras está vacía.";
+    return (para_telegram ? "🛒 Lista de compras de mamá (" + std::to_string(n) + "):\n" : std::string("Lista de compras:\n")) + s;
+}
+
+void Madre::VaciarCompras() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    compras_ = "[]";
+    Guardar("compras", "[]");
+}
+
+void Madre::RegistrarComprasTelegram() {
+    auto& tg = TelegramBot::GetInstance();
+    auto botones = [this](std::string& b) {
+        bool vacia = GetSeccion("compras").find("\"item\"") == std::string::npos;
+        b = vacia ? "" : "{\"inline_keyboard\":[[{\"text\":\"✅ Ya compré todo\",\"callback_data\":\"compras:vaciar\"}],"
+                         "[{\"text\":\"🔄 Actualizar\",\"callback_data\":\"compras:ver\"}]]}";
+    };
+    tg.AddAdminCommand(
+        [this, botones](const std::string& cmd, const std::string& arg, std::string& texto, std::string& b) {
+            if (cmd != "/compras") return false;
+            if (!arg.empty()) {                              // "/compras leche, pan" agrega desde Telegram
+                AgregarCompras(arg);
+            }
+            texto = TextoCompras(true);
+            botones(b);
+            return true;
+        },
+        "/compras - ver la lista de compras de mamá (o /compras leche, pan para agregar)");
+    tg.AddCallbackHandler([this, botones](const std::string& data, std::string& texto, std::string& b) {
+        if (data == "compras:vaciar") {
+            VaciarCompras();
+            texto = "✅ Listo, vacié la lista de compras.";
+            return true;
+        }
+        if (data == "compras:ver") {
+            texto = TextoCompras(true);
+            botones(b);
+            return true;
+        }
+        return false;
+    });
+}
+
+// ----------------------------------------------------------------------------
 // Textos para XiaoZhi
 // ----------------------------------------------------------------------------
 std::string Madre::TextoFamilia() {
@@ -1211,6 +1400,39 @@ void Madre::RegistrarHerramientas() {
         "included in the result.",
         PropertyList(),
         [this](const PropertyList&) -> ReturnValue { return TextoNoticias(); });
+
+    mcp.AddTool("self.madre.shopping_add",
+        "Add things to the user's shopping list. Use it when she says she needs something, ran out of "
+        "something or asks to note something for shopping ('me falta harina', 'anotá yerba', 'se terminó "
+        "el azúcar', 'necesito pilas'). 'items': the things in Spanish, short, separated by commas, "
+        "keeping quantities she mentions (e.g. 'harina, 2 litros de leche'). Then confirm briefly what "
+        "you noted. Her son Julio sees the list on Telegram and does the shopping.",
+        PropertyList({Property("items", kPropertyTypeString)}),
+        [this](const PropertyList& props) -> ReturnValue {
+            return AgregarCompras(props["items"].value<std::string>());
+        });
+
+    mcp.AddTool("self.madre.shopping_list",
+        "Read the user's shopping list. Use it when she asks what is on the list or what she has to buy.",
+        PropertyList(),
+        [this](const PropertyList&) -> ReturnValue { return TextoCompras(false); });
+
+    mcp.AddTool("self.madre.shopping_remove",
+        "Remove something from the user's shopping list, when she says she doesn't need it anymore or "
+        "already has it ('sacá la yerba', 'ya no hace falta el pan').",
+        PropertyList({Property("item", kPropertyTypeString)}),
+        [this](const PropertyList& props) -> ReturnValue {
+            return QuitarCompra(props["item"].value<std::string>());
+        });
+
+    mcp.AddTool("self.madre.shopping_send",
+        "Send the shopping list to her son Julio by Telegram right now. Use it only when she explicitly "
+        "asks to send the list to Julio ('mandale la lista a Julio').",
+        PropertyList(),
+        [this](const PropertyList&) -> ReturnValue {
+            TelegramBot::GetInstance().QueueMessage(TextoCompras(true));
+            return std::string("Listo, la lista le va a llegar a Julio por Telegram.");
+        });
 
     mcp.AddTool("self.madre.get_config_address",
         "Get the web address of this device's configuration page and show it on the screen. Use it "

@@ -454,6 +454,15 @@ void TelegramBot::PollLoop() {
     }
 }
 
+void TelegramBot::AddAdminCommand(ComandoExtra f, const std::string& ayuda) {
+    comandos_extra_.push_back(std::move(f));
+    if (!ayuda.empty()) ayuda_extra_.push_back(ayuda);
+}
+
+void TelegramBot::AddCallbackHandler(BotonExtra f) {
+    botones_extra_.push_back(std::move(f));
+}
+
 void TelegramBot::QueueMessage(const std::string& text, const std::string& chat_id) {
     std::lock_guard<std::mutex> lock(data_mutex_);
     if (outbox_.size() >= 30) {
@@ -1115,6 +1124,13 @@ void TelegramBot::HandleCallbackQuery(cJSON* callback) {
     if (from_id != default_chat_id_ || !cJSON_IsString(data)) return;  // sólo el administrador
 
     std::string d = data->valuestring;
+    for (auto& f : botones_extra_) {
+        std::string texto, botones;
+        if (f(d, texto, botones)) {
+            if (!texto.empty()) SendMessage(texto, default_chat_id_, botones);
+            return;
+        }
+    }
     if (d.size() < 4 || d[2] != ':') return;
     std::string action = d.substr(0, 2);
     std::string target = d.substr(3);
@@ -1166,6 +1182,14 @@ bool TelegramBot::HandleAdminCommand(const std::string& text) {
         }
         return -1;
     };
+
+    for (auto& f : comandos_extra_) {
+        std::string texto, botones;
+        if (f(cmd, arg, texto, botones)) {
+            if (!texto.empty()) SendMessage(texto, default_chat_id_, botones);
+            return true;
+        }
+    }
 
     if (cmd == "/vincular") {
         if (arg.empty()) {
@@ -1280,6 +1304,7 @@ bool TelegramBot::HandleAdminCommand(const std::string& text) {
                 "/familia - ver quiénes están\n/exportar - recibir familia.txt actualizado\n"
                 "/quitar Nombre - sacar a alguien\n"
                 "/nombre Nombre = Nuevo nombre - cómo lo llama el XiaoZhi\n"
+                + [this]() { std::string s; for (auto& a : ayuda_extra_) s += a + "\n"; return s; }() +
                 "También: si alguien le escribe al bot sin invitación, te llega un aviso para aprobarlo.");
     return true;
 }
