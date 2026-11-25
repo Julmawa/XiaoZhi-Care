@@ -1,0 +1,1025 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XiaoZhi de mamá</title>
+<style>
+  :root {
+    --fondo: #f6f3ee;
+    --tarjeta: #ffffff;
+    --texto: #2b2622;
+    --suave: #7a6f66;
+    --borde: #e4ddd3;
+    --acento: #c2562d;
+    --acento-claro: #fbe9e1;
+    --verde: #3f7d4e;
+    --verde-claro: #e3f1e6;
+    --manana: #e9a23b;
+    --tarde: #d9692c;
+    --noche: #4b5aa8;
+    --radio: 14px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 18px;
+    line-height: 1.4;
+    background: var(--fondo);
+    color: var(--texto);
+  }
+  header {
+    background: var(--acento);
+    color: #fff;
+    padding: 14px 16px 10px;
+  }
+  header h1 { margin: 0; font-size: 22px; font-weight: 700; }
+  header p { margin: 2px 0 0; font-size: 14px; opacity: .9; }
+  nav {
+    position: sticky; top: 0; z-index: 5;
+    display: flex; background: var(--tarjeta);
+    border-bottom: 1px solid var(--borde);
+  }
+  nav button {
+    flex: 1; border: 0; background: none; padding: 12px 4px 10px;
+    font: inherit; font-size: 15px; color: var(--suave); cursor: pointer;
+    border-bottom: 3px solid transparent;
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+  }
+  nav button .ico { font-size: 24px; line-height: 1; }
+  nav button.activa { color: var(--acento); border-bottom-color: var(--acento); font-weight: 600; }
+  main { max-width: 720px; margin: 0 auto; padding: 14px 12px 110px; }
+  .aviso {
+    background: #fff6d9; border: 1px solid #f0dc9a; color: #6d5a1c;
+    border-radius: var(--radio); padding: 10px 12px; font-size: 15px; margin-bottom: 12px;
+  }
+  .seccion { display: none; }
+  .seccion.activa { display: block; }
+  .intro { color: var(--suave); font-size: 15px; margin: 0 0 12px; }
+  .tarjeta {
+    background: var(--tarjeta); border: 1px solid var(--borde);
+    border-radius: var(--radio); padding: 14px; margin-bottom: 10px;
+  }
+  .fila { display: flex; align-items: flex-start; gap: 12px; }
+  .fila .cuerpo { flex: 1; min-width: 0; }
+  .avatar {
+    width: 46px; height: 46px; border-radius: 50%;
+    background: var(--acento-claro); color: var(--acento);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 20px; flex-shrink: 0;
+  }
+  .titulo { font-weight: 700; font-size: 19px; }
+  .sub { color: var(--suave); font-size: 15px; }
+  .dato { font-size: 16px; margin-top: 4px; word-wrap: break-word; }
+  .dato b { font-weight: 600; }
+  .acciones { display: flex; gap: 6px; flex-shrink: 0; }
+  .btn-ico {
+    border: 1px solid var(--borde); background: #fff; border-radius: 10px;
+    width: 42px; height: 42px; font-size: 19px; cursor: pointer;
+  }
+  .hora-grande { font-size: 28px; font-weight: 700; letter-spacing: .5px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+  .chip {
+    font-size: 13px; padding: 2px 8px; border-radius: 20px;
+    background: #f0ebe4; color: var(--suave);
+  }
+  .chip.on { background: var(--verde-claro); color: var(--verde); font-weight: 600; }
+  .apagado { opacity: .5; }
+  .vacio { text-align: center; color: var(--suave); padding: 30px 10px; }
+  .boton {
+    border: 0; border-radius: 12px; padding: 14px 18px; font: inherit; font-weight: 600;
+    cursor: pointer; background: var(--acento); color: #fff;
+  }
+  .boton.sec { background: #fff; color: var(--texto); border: 1px solid var(--borde); }
+  .boton.peligro { background: #fff; color: #b3261e; border: 1px solid #f0c7c4; }
+  .agregar { width: 100%; margin-top: 4px; font-size: 18px; }
+
+  /* Pastillero */
+  .grilla { width: 100%; border-collapse: separate; border-spacing: 4px; table-layout: fixed; }
+  .grilla th { font-size: 13px; color: var(--suave); font-weight: 600; padding: 2px 0; }
+  .grilla th.franja { text-align: left; width: 62px; }
+  .casillero {
+    height: 46px; border-radius: 10px; background: #f0ebe4;
+    font-size: 12px; text-align: center; vertical-align: middle; cursor: pointer;
+    border: 2px solid transparent; padding: 2px;
+  }
+  .casillero .n { font-size: 18px; font-weight: 700; display: block; }
+  .casillero.vacio-c { color: #bfb5aa; }
+  .casillero.manana { background: #fcecd2; }
+  .casillero.tarde { background: #fadccb; }
+  .casillero.noche { background: #dde1f3; }
+  .casillero.sel { border-color: var(--texto); }
+  .franja-tit { display: flex; align-items: center; gap: 10px; }
+  .punto { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; }
+  .med { border-top: 1px dashed var(--borde); padding-top: 8px; margin-top: 8px; }
+  .detalle-casillero { margin-top: 8px; }
+
+  /* Formulario (hoja inferior) */
+  .fondo-modal {
+    position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 20;
+    display: none; align-items: flex-end; justify-content: center;
+  }
+  .fondo-modal.abierto { display: flex; }
+  .modal {
+    background: #fff; width: 100%; max-width: 720px; max-height: 92vh; overflow-y: auto;
+    border-radius: 18px 18px 0 0; padding: 18px 16px 22px;
+  }
+  .modal h2 { margin: 0 0 12px; font-size: 21px; }
+  label { display: block; font-weight: 600; font-size: 15px; margin: 12px 0 4px; }
+  label .opc { font-weight: 400; color: var(--suave); }
+  input[type=text], input[type=tel], input[type=time], textarea, select {
+    width: 100%; font: inherit; padding: 12px; border-radius: 10px;
+    border: 1px solid var(--borde); background: #fff;
+  }
+  textarea { min-height: 80px; resize: vertical; }
+  .dias { display: flex; gap: 5px; }
+  .dias button {
+    flex: 1; border: 1px solid var(--borde); background: #fff; border-radius: 10px;
+    padding: 10px 0; font: inherit; font-weight: 600; cursor: pointer; color: var(--suave);
+  }
+  .dias button.on { background: var(--verde); border-color: var(--verde); color: #fff; }
+  .atajos { display: flex; gap: 6px; margin-top: 6px; }
+  .atajos button {
+    border: 0; background: none; color: var(--acento); font: inherit; font-size: 14px;
+    cursor: pointer; padding: 4px 0; text-decoration: underline;
+  }
+  .check { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; font-size: 16px; }
+  .check input { width: 22px; height: 22px; margin-top: 2px; flex-shrink: 0; }
+  .botones-modal { display: flex; gap: 8px; margin-top: 18px; }
+  .botones-modal .boton { flex: 1; }
+  .ayuda { font-size: 13px; color: var(--suave); margin-top: 4px; }
+
+  .grupo-tit { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 19px; margin-bottom: 4px; }
+  .grupo-tit .ico { font-size: 22px; }
+  .interruptor { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 12px; font-size: 16px; }
+  .interruptor input { width: 24px; height: 24px; flex-shrink: 0; }
+  input[type=range] { width: 100%; margin: 8px 0 0; accent-color: var(--acento); }
+  .valor { font-weight: 700; color: var(--acento); }
+  .info { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 15px; margin-top: 6px; }
+  .info span:nth-child(odd) { color: var(--suave); }
+  .frase { display: flex; gap: 6px; margin-top: 6px; }
+  .frase input { flex: 1; }
+  .frase .btn-ico { width: 46px; height: auto; }
+  .barra-guardar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; background: rgba(246,243,238,.95);
+    border-top: 1px solid var(--borde); padding: 10px 12px; display: none;
+  }
+  .barra-guardar.visible { display: block; }
+  .barra-guardar .boton { width: 100%; max-width: 720px; display: block; margin: 0 auto; font-size: 18px; }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    background: var(--texto); color: #fff; padding: 12px 18px; border-radius: 12px;
+    font-size: 16px; z-index: 30; display: none; max-width: 90%; text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>XiaoZhi de mamá</h1>
+  <p id="estadoEquipo">Configuración del equipo</p>
+</header>
+
+<nav>
+  <button class="activa" data-tab="familia"><span class="ico">👨‍👩‍👧</span>Familia</button>
+  <button data-tab="recordatorios"><span class="ico">⏰</span>Recordatorios</button>
+  <button data-tab="pastillero"><span class="ico">💊</span>Pastillero</button>
+  <button data-tab="ajustes"><span class="ico">⚙️</span>Ajustes</button>
+</nav>
+
+<main>
+  <div class="aviso" id="avisoDemo" style="display:none">
+    Vista previa con datos de ejemplo: los cambios no se guardan en el equipo.
+  </div>
+
+  <!-- ===================== FAMILIA ===================== -->
+  <section class="seccion activa" id="sec-familia">
+    <p class="intro">Las personas cercanas a mamá. XiaoZhi usa estos datos para responderle,
+      por ejemplo: <i>"¿cuál es el teléfono de Julio?"</i> o <i>"¿dónde vive Sofi?"</i></p>
+    <div id="listaFamilia"></div>
+    <button class="boton agregar" onclick="editarPersona(-1)">＋ Agregar persona</button>
+  </section>
+
+  <!-- ===================== RECORDATORIOS ===================== -->
+  <section class="seccion" id="sec-recordatorios">
+    <p class="intro">A la hora indicada XiaoZhi se lo dice a mamá con su voz.
+      Si está dormida o no está en la pieza, espera a que vuelva.</p>
+    <div id="listaRecordatorios"></div>
+    <button class="boton agregar" onclick="editarRecordatorio(-1)">＋ Agregar recordatorio</button>
+  </section>
+
+  <!-- ===================== PASTILLERO ===================== -->
+  <section class="seccion" id="sec-pastillero">
+    <p class="intro">Qué remedio va en cada casillero y a qué hora se toma.
+      El número es la cantidad de remedios de cada casillero: tocalo para ver cuáles son.</p>
+    <div class="tarjeta">
+      <table class="grilla" id="grilla"></table>
+      <div class="detalle-casillero" id="detalleCasillero"></div>
+    </div>
+    <div id="listaFranjas"></div>
+  </section>
+
+  <!-- ===================== AJUSTES ===================== -->
+  <section class="seccion" id="sec-ajustes">
+    <p class="intro">Cómo se comporta el equipo. Después de cambiar algo, tocá <b>Guardar ajustes</b>.</p>
+    <div id="panelAjustes"></div>
+  </section>
+</main>
+
+<div class="barra-guardar" id="barraGuardar">
+  <button class="boton" onclick="guardarAjustes()">Guardar ajustes</button>
+</div>
+
+<!-- Formulario reutilizable -->
+<div class="fondo-modal" id="fondoModal" onclick="if(event.target===this)cerrarModal()">
+  <div class="modal" id="modal"></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+// ------------------------------------------------------------------
+// Datos
+// ------------------------------------------------------------------
+const DIAS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+const DIAS_LETRA = ["L", "M", "M", "J", "V", "S", "D"];
+const FRANJAS = [
+  { id: "manana", nombre: "Mañana", color: "var(--manana)" },
+  { id: "tarde",  nombre: "Tarde",  color: "var(--tarde)" },
+  { id: "noche",  nombre: "Noche",  color: "var(--noche)" },
+];
+const TODOS = [0, 1, 2, 3, 4, 5, 6];
+
+const AJUSTES_BASE = {
+  radar: { activo: true, alcance: 2, sinNadie: 5, avisosTelegram: false },
+  saludo: { activo: true, horasQuieta: 2, alternar: true, decirFecha: true,
+            frases: ["Hola, ¿te despertaste? ¿Cómo te sentís?",
+                     "¿Estás despierta? ¿Necesitás algo?",
+                     "Buen día, ¿cómo dormiste?"] },
+  bienestar: { activo: true, horas: 14 },
+  pastillero: { conectar: false, ip: "" },
+  noticias: { activo: true, enSaludo: false, fuente: "infobae", cantidad: 3 },
+  mama: { nombre: "", apodo: "", cumple: "" },
+  radios: [],
+  volumen: 70,
+};
+let datos = { familia: [], recordatorios: [], pastillero: { franjas: {} }, ajustes: {} };
+let estadoEquipo = {};
+let modoDemo = false;
+let casilleroSel = null;
+
+const DEMO = {
+  familia: [
+    { nombre: "Julio", apodo: "Julito", parentesco: "Hijo", telefono: "11 5555-1234",
+      direccion: "Av. Rivadavia 1234, Caballito", cumple: "15/03", notas: "La visita los domingos" },
+    { nombre: "Sofía", apodo: "Sofi", parentesco: "Nieta", telefono: "11 5555-9876",
+      direccion: "Calle Falsa 742, Ramos Mejía", cumple: "02/09", notas: "" },
+    { nombre: "Elsa", apodo: "la tía Elsa", parentesco: "Hermana", telefono: "11 4444-2222",
+      direccion: "", cumple: "", notas: "Hablan por teléfono los martes" },
+  ],
+  recordatorios: [
+    { texto: "Llamar a Julio", hora: "18:00", dias: [0, 2, 4], activo: true, repetir: true, avisar: true },
+    { texto: "Mañana viene la señora a limpiar", hora: "20:30", dias: [2], activo: true, repetir: false, avisar: false },
+    { texto: "Regar las plantas", hora: "10:00", dias: [5], activo: false, repetir: false, avisar: false },
+  ],
+  pastillero: { franjas: {
+    manana: { hora: "09:00", meds: [
+      { nombre: "Enalapril", dosis: "10 mg, 1 pastilla", aspecto: "blanca redonda chica", dias: TODOS.slice() },
+      { nombre: "Vitamina D", dosis: "1 cápsula", aspecto: "amarilla", dias: [6] },
+    ]},
+    tarde: { hora: "14:00", meds: [
+      { nombre: "Aspirineta", dosis: "1 pastilla", aspecto: "blanca muy chica", dias: TODOS.slice() },
+    ]},
+    noche: { hora: "21:00", meds: [
+      { nombre: "Atorvastatina", dosis: "20 mg", aspecto: "blanca alargada", dias: TODOS.slice() },
+      { nombre: "Clonazepam", dosis: "media pastilla", aspecto: "rosa", dias: TODOS.slice() },
+    ]},
+  }},
+};
+
+// ------------------------------------------------------------------
+// Comunicación con el equipo (/api/...). Si no responde: vista previa.
+// ------------------------------------------------------------------
+async function cargar() {
+  try {
+    const r = await fetch("/api/config", { cache: "no-store" });
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    datos.familia = d.familia || [];
+    datos.recordatorios = d.recordatorios || [];
+    datos.pastillero = d.pastillero || { franjas: {} };
+    datos.ajustes = d.ajustes || {};
+    estadoEquipo = d.estado || {};
+    mostrarEstado(estadoEquipo);
+  } catch (e) {
+    modoDemo = true;
+    datos = JSON.parse(JSON.stringify(DEMO));
+    estadoEquipo = { hora: "mié 25/11 09:23", ip: "192.168.0.233", presencia: "quieta a 80 cm",
+                     wifi: "WIFI JMW-2.4 (buena)", version: "2.5.1", pastillero: "sin configurar" };
+    document.getElementById("avisoDemo").style.display = "block";
+    document.getElementById("estadoEquipo").textContent = "Vista previa (sin conexión al equipo)";
+  }
+  normalizar();
+  dibujarTodo();
+}
+
+function normalizar() {
+  // completa los ajustes que falten con los valores por defecto
+  if (!datos.ajustes || typeof datos.ajustes !== "object") datos.ajustes = {};
+  const base = JSON.parse(JSON.stringify(AJUSTES_BASE));
+  for (const k in base) {
+    if (typeof base[k] === "object") datos.ajustes[k] = Object.assign(base[k], datos.ajustes[k] || {});
+    else if (datos.ajustes[k] === undefined) datos.ajustes[k] = base[k];
+  }
+  if (!Array.isArray(datos.familia)) datos.familia = [];
+  if (!Array.isArray(datos.recordatorios)) datos.recordatorios = [];
+  if (!datos.pastillero || typeof datos.pastillero !== "object") datos.pastillero = {};
+  if (!datos.pastillero.franjas || typeof datos.pastillero.franjas !== "object") datos.pastillero.franjas = {};
+  for (const f of FRANJAS) {
+    const fr = datos.pastillero.franjas[f.id];
+    if (!fr || typeof fr !== "object") datos.pastillero.franjas[f.id] = { hora: "", meds: [] };
+    else if (!Array.isArray(fr.meds)) fr.meds = [];
+  }
+}
+
+async function guardar(seccion) {
+  if (modoDemo) { aviso("Vista previa: no se guardó en el equipo"); return; }
+  try {
+    const r = await fetch("/api/" + seccion, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(datos[seccion]),
+    });
+    if (!r.ok) throw new Error(r.status);
+    aviso("✓ Guardado en el XiaoZhi");
+  } catch (e) {
+    aviso("No se pudo guardar. ¿Estás en el WiFi de mamá?");
+  }
+}
+
+function mostrarEstado(e) {
+  const partes = [];
+  if (e.hora) partes.push("Hora del equipo: " + e.hora);
+  if (e.presencia) partes.push("Radar: " + e.presencia);
+  document.getElementById("estadoEquipo").textContent = partes.join(" · ") || "Conectado";
+}
+
+// ------------------------------------------------------------------
+// Utilidades
+// ------------------------------------------------------------------
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function iniciales(nombre) {
+  return (nombre || "?").trim().split(/\s+/).map(p => p[0]).slice(0, 2).join("").toUpperCase();
+}
+function textoDias(dias) {
+  if (!dias || dias.length === 0) return "Ningún día";
+  if (dias.length === 7) return "Todos los días";
+  const s = dias.slice().sort().join(",");
+  if (s === "0,1,2,3,4") return "De lunes a viernes";
+  if (s === "5,6") return "Fines de semana";
+  return dias.slice().sort().map(d => DIAS[d]).join(", ");
+}
+function chipsDias(dias) {
+  return '<div class="chips">' + DIAS.map((d, i) =>
+    `<span class="chip ${dias && dias.includes(i) ? "on" : ""}">${d}</span>`).join("") + "</div>";
+}
+function aviso(txt) {
+  const t = document.getElementById("toast");
+  t.textContent = txt; t.style.display = "block";
+  clearTimeout(aviso._t); aviso._t = setTimeout(() => t.style.display = "none", 2500);
+}
+function abrirModal(html) {
+  document.getElementById("modal").innerHTML = html;
+  document.getElementById("fondoModal").classList.add("abierto");
+}
+function cerrarModal() { document.getElementById("fondoModal").classList.remove("abierto"); }
+function val(id) { return document.getElementById(id).value.trim(); }
+
+function selectorDias(dias) {
+  return `<div class="dias" id="selDias">` + DIAS_LETRA.map((l, i) =>
+    `<button type="button" class="${dias.includes(i) ? "on" : ""}" data-d="${i}"
+       onclick="this.classList.toggle('on')" title="${DIAS[i]}">${l}</button>`).join("") +
+    `</div><div class="atajos">
+       <button type="button" onclick="marcarDias([0,1,2,3,4,5,6])">Todos</button>
+       <button type="button" onclick="marcarDias([0,1,2,3,4])">Lun a vie</button>
+       <button type="button" onclick="marcarDias([5,6])">Fin de semana</button>
+       <button type="button" onclick="marcarDias([])">Ninguno</button>
+     </div>`;
+}
+function marcarDias(lista) {
+  document.querySelectorAll("#selDias button").forEach(b =>
+    b.classList.toggle("on", lista.includes(+b.dataset.d)));
+}
+function diasMarcados() {
+  return [...document.querySelectorAll("#selDias button.on")].map(b => +b.dataset.d);
+}
+
+// ------------------------------------------------------------------
+// Pestañas
+// ------------------------------------------------------------------
+document.querySelectorAll("nav button").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll("nav button").forEach(x => x.classList.toggle("activa", x === b));
+  document.querySelectorAll(".seccion").forEach(s =>
+    s.classList.toggle("activa", s.id === "sec-" + b.dataset.tab));
+  document.getElementById("barraGuardar").classList.toggle("visible", b.dataset.tab === "ajustes");
+  window.scrollTo(0, 0);
+}));
+
+function dibujarTodo() { dibujarFamilia(); dibujarRecordatorios(); dibujarPastillero(); dibujarAjustes(); }
+
+// ------------------------------------------------------------------
+// 1) Familia
+// ------------------------------------------------------------------
+function dibujarFamilia() {
+  const cont = document.getElementById("listaFamilia");
+  if (datos.familia.length === 0) {
+    cont.innerHTML = '<div class="tarjeta vacio">Todavía no hay nadie cargado.</div>';
+    return;
+  }
+  cont.innerHTML = datos.familia.map((p, i) => `
+    <div class="tarjeta"><div class="fila">
+      <div class="avatar">${esc(iniciales(p.nombre))}</div>
+      <div class="cuerpo">
+        <div class="titulo">${esc(p.nombre)}${p.apodo ? ` <span class="sub">(“${esc(p.apodo)}”)</span>` : ""}</div>
+        ${p.parentesco ? `<div class="sub">${esc(p.parentesco)}</div>` : ""}
+        ${p.telefono ? `<div class="dato">📞 <a href="tel:${esc(p.telefono.replace(/[^0-9+]/g, ""))}">${esc(p.telefono)}</a></div>` : ""}
+        ${p.direccion ? `<div class="dato">🏠 ${esc(p.direccion)}</div>` : ""}
+        ${p.cumple ? `<div class="dato">🎂 ${esc(p.cumple)}</div>` : ""}
+        ${p.notas ? `<div class="dato sub">${esc(p.notas)}</div>` : ""}
+      </div>
+      <div class="acciones">
+        <button class="btn-ico" onclick="editarPersona(${i})" title="Editar">✏️</button>
+      </div>
+    </div></div>`).join("");
+}
+
+function editarPersona(i) {
+  const p = i >= 0 ? datos.familia[i] : { nombre: "", apodo: "", parentesco: "", telefono: "", direccion: "", cumple: "", notas: "" };
+  abrirModal(`
+    <h2>${i >= 0 ? "Editar persona" : "Nueva persona"}</h2>
+    <label>Nombre</label>
+    <input type="text" id="pNombre" value="${esc(p.nombre)}" placeholder="Ej.: Julio">
+    <label>Cómo lo llama mamá <span class="opc">(apodo)</span></label>
+    <input type="text" id="pApodo" value="${esc(p.apodo)}" placeholder="Ej.: Julito">
+    <label>Parentesco</label>
+    <input type="text" id="pParentesco" value="${esc(p.parentesco)}" placeholder="Ej.: Hijo, nieta, vecina">
+    <label>Teléfono</label>
+    <input type="tel" id="pTelefono" value="${esc(p.telefono)}" placeholder="Ej.: 11 5555-1234">
+    <label>Dirección <span class="opc">(opcional)</span></label>
+    <input type="text" id="pDireccion" value="${esc(p.direccion)}" placeholder="Calle, número, barrio">
+    <label>Cumpleaños <span class="opc">(opcional, día/mes/año)</span></label>
+    <input type="text" id="pCumple" value="${esc(p.cumple)}" placeholder="Ej.: 15/03/1975" inputmode="numeric">
+    <label>Notas <span class="opc">(opcional)</span></label>
+    <textarea id="pNotas" placeholder="Algo que ayude a mamá a ubicarlo">${esc(p.notas)}</textarea>
+    <div class="botones-modal">
+      ${i >= 0 ? `<button class="boton peligro" onclick="borrarPersona(${i})">Borrar</button>` : ""}
+      <button class="boton sec" onclick="cerrarModal()">Cancelar</button>
+      <button class="boton" onclick="guardarPersona(${i})">Guardar</button>
+    </div>`);
+}
+
+function guardarPersona(i) {
+  const p = {
+    nombre: val("pNombre"), apodo: val("pApodo"), parentesco: val("pParentesco"),
+    telefono: val("pTelefono"), direccion: val("pDireccion"), cumple: val("pCumple"), notas: val("pNotas"),
+  };
+  if (!p.nombre) { aviso("Falta el nombre"); return; }
+  if (p.cumple && !/^\d{1,2}\/\d{1,2}(\/\d{4})?$/.test(p.cumple)) { aviso("El cumpleaños va como día/mes o día/mes/año, ej.: 15/03/1975"); return; }
+  if (i >= 0) datos.familia[i] = p; else datos.familia.push(p);
+  cerrarModal(); dibujarFamilia(); guardar("familia");
+}
+
+function borrarPersona(i) {
+  if (!confirm("¿Borrar a " + datos.familia[i].nombre + "?")) return;
+  datos.familia.splice(i, 1);
+  cerrarModal(); dibujarFamilia(); guardar("familia");
+}
+
+// ------------------------------------------------------------------
+// 2) Recordatorios
+// ------------------------------------------------------------------
+function dibujarRecordatorios() {
+  const cont = document.getElementById("listaRecordatorios");
+  if (datos.recordatorios.length === 0) {
+    cont.innerHTML = '<div class="tarjeta vacio">No hay recordatorios.</div>';
+    return;
+  }
+  const orden = datos.recordatorios.map((r, i) => ({ r, i })).sort((a, b) => a.r.hora.localeCompare(b.r.hora));
+  cont.innerHTML = orden.map(({ r, i }) => `
+    <div class="tarjeta ${r.activo ? "" : "apagado"}"><div class="fila">
+      <div class="cuerpo">
+        <div class="hora-grande">${esc(r.hora)}</div>
+        <div class="titulo">${esc(r.texto)}</div>
+        <div class="sub">${esc(textoDias(r.dias))}${r.activo ? "" : " · apagado"}</div>
+        ${r.repetir ? `<div class="dato sub">🔁 Repite hasta que toque el botón${r.avisar ? " · 📲 te avisa si no confirma" : ""}</div>` : ""}
+      </div>
+      <div class="acciones">
+        <button class="btn-ico" onclick="editarRecordatorio(${i})" title="Editar">✏️</button>
+      </div>
+    </div></div>`).join("");
+}
+
+function editarRecordatorio(i) {
+  const r = i >= 0 ? datos.recordatorios[i]
+                   : { texto: "", hora: "", dias: TODOS.slice(), activo: true, repetir: true, avisar: true };
+  abrirModal(`
+    <h2>${i >= 0 ? "Editar recordatorio" : "Nuevo recordatorio"}</h2>
+    <label>Qué le dice XiaoZhi</label>
+    <input type="text" id="rTexto" value="${esc(r.texto)}" placeholder="Ej.: Llamar a Julio">
+    <div class="ayuda">Escribilo corto. XiaoZhi lo dice con sus palabras: "Te recuerdo que…"</div>
+    <label>Hora</label>
+    <input type="time" id="rHora" value="${esc(r.hora)}">
+    <label>Qué días</label>
+    ${selectorDias(r.dias || [])}
+    <label class="check"><input type="checkbox" id="rRepetir" ${r.repetir ? "checked" : ""}
+      onchange="document.getElementById('rAvisarFila').style.display=this.checked?'flex':'none'">
+      Repetir cada 10 minutos (hasta 3 veces) hasta que toque el botón</label>
+    <label class="check" id="rAvisarFila" style="display:${r.repetir ? "flex" : "none"}">
+      <input type="checkbox" id="rAvisar" ${r.avisar ? "checked" : ""}>
+      Avisarme por Telegram si no lo confirma</label>
+    <label class="check"><input type="checkbox" id="rActivo" ${r.activo ? "checked" : ""}>
+      Activo</label>
+    <div class="botones-modal">
+      ${i >= 0 ? `<button class="boton peligro" onclick="borrarRecordatorio(${i})">Borrar</button>` : ""}
+      <button class="boton sec" onclick="cerrarModal()">Cancelar</button>
+      <button class="boton" onclick="guardarRecordatorio(${i})">Guardar</button>
+    </div>`);
+}
+
+function guardarRecordatorio(i) {
+  const r = {
+    texto: val("rTexto"), hora: val("rHora"), dias: diasMarcados(),
+    repetir: document.getElementById("rRepetir").checked,
+    avisar: document.getElementById("rRepetir").checked && document.getElementById("rAvisar").checked,
+    activo: document.getElementById("rActivo").checked,
+  };
+  if (!r.texto) { aviso("Falta qué tiene que decir"); return; }
+  if (!/^\d{2}:\d{2}$/.test(r.hora)) { aviso("Falta la hora"); return; }
+  if (r.dias.length === 0) { aviso("Elegí al menos un día"); return; }
+  if (i >= 0) datos.recordatorios[i] = r; else datos.recordatorios.push(r);
+  cerrarModal(); dibujarRecordatorios(); guardar("recordatorios");
+}
+
+function borrarRecordatorio(i) {
+  if (!confirm("¿Borrar este recordatorio?")) return;
+  datos.recordatorios.splice(i, 1);
+  cerrarModal(); dibujarRecordatorios(); guardar("recordatorios");
+}
+
+// ------------------------------------------------------------------
+// 3) Pastillero
+// ------------------------------------------------------------------
+function medsDelCasillero(franjaId, dia) {
+  const f = datos.pastillero.franjas[franjaId];
+  return f ? f.meds.filter(m => (m.dias || TODOS).includes(dia)) : [];
+}
+
+function dibujarPastillero() {
+  // Grilla 3 x 7, igual que el pastillero
+  let html = "<tr><th class='franja'></th>" + DIAS.map(d => `<th>${d}</th>`).join("") + "</tr>";
+  for (const f of FRANJAS) {
+    html += `<tr><th class="franja">${f.nombre}</th>`;
+    for (let d = 0; d < 7; d++) {
+      const meds = medsDelCasillero(f.id, d);
+      const sel = casilleroSel && casilleroSel.f === f.id && casilleroSel.d === d;
+      html += `<td class="casillero ${meds.length ? f.id : "vacio-c"} ${sel ? "sel" : ""}"
+                   onclick="elegirCasillero('${f.id}', ${d})">
+                 <span class="n">${meds.length || "–"}</span>
+               </td>`;
+    }
+    html += "</tr>";
+  }
+  document.getElementById("grilla").innerHTML = html;
+  dibujarDetalleCasillero();
+
+  // Franjas con sus remedios
+  document.getElementById("listaFranjas").innerHTML = FRANJAS.map(f => {
+    const fr = datos.pastillero.franjas[f.id];
+    return `<div class="tarjeta">
+      <div class="franja-tit">
+        <span class="punto" style="background:${f.color}"></span>
+        <div class="cuerpo" style="flex:1">
+          <div class="titulo">${f.nombre}</div>
+          <div class="sub">${fr.hora ? "Se toma a las " + esc(fr.hora) : "Sin hora asignada"}</div>
+        </div>
+        <button class="btn-ico" onclick="editarHoraFranja('${f.id}')" title="Cambiar hora">🕘</button>
+      </div>
+      ${fr.meds.length === 0 ? `<div class="med sub">Sin remedios en esta franja.</div>` :
+        fr.meds.map((m, i) => `
+        <div class="med fila">
+          <div class="cuerpo">
+            <div class="titulo" style="font-size:17px">${esc(m.nombre)}</div>
+            <div class="sub">${esc(m.dosis)}${m.aspecto ? " · " + esc(m.aspecto) : ""}</div>
+            <div class="sub">${esc(textoDias(m.dias))}</div>
+          </div>
+          <button class="btn-ico" onclick="editarMed('${f.id}', ${i})" title="Editar">✏️</button>
+        </div>`).join("")}
+      <button class="boton sec agregar" style="margin-top:10px" onclick="editarMed('${f.id}', -1)">＋ Agregar remedio a la ${f.nombre.toLowerCase()}</button>
+    </div>`;
+  }).join("");
+}
+
+function elegirCasillero(f, d) {
+  casilleroSel = (casilleroSel && casilleroSel.f === f && casilleroSel.d === d) ? null : { f, d };
+  dibujarPastillero();
+}
+
+function dibujarDetalleCasillero() {
+  const cont = document.getElementById("detalleCasillero");
+  if (!casilleroSel) { cont.innerHTML = ""; return; }
+  const f = FRANJAS.find(x => x.id === casilleroSel.f);
+  const fr = datos.pastillero.franjas[f.id];
+  const meds = medsDelCasillero(f.id, casilleroSel.d);
+  cont.innerHTML = `<div class="titulo" style="font-size:17px">${DIAS[casilleroSel.d]} · ${f.nombre}
+      ${fr.hora ? `<span class="sub">(${esc(fr.hora)})</span>` : ""}</div>` +
+    (meds.length ? meds.map(m => `<div class="dato">• <b>${esc(m.nombre)}</b> — ${esc(m.dosis)}${m.aspecto ? `, ${esc(m.aspecto)}` : ""}</div>`).join("")
+                 : `<div class="dato sub">Casillero vacío.</div>`);
+}
+
+function editarHoraFranja(fid) {
+  const f = FRANJAS.find(x => x.id === fid);
+  abrirModal(`
+    <h2>Hora de la ${f.nombre.toLowerCase()}</h2>
+    <label>A qué hora se toman los remedios de la ${f.nombre.toLowerCase()}</label>
+    <input type="time" id="fHora" value="${esc(datos.pastillero.franjas[fid].hora)}">
+    <div class="ayuda">A esa hora XiaoZhi le recuerda a mamá que tome los remedios,
+      salvo que ya los haya confirmado en el pastillero.</div>
+    <div class="botones-modal">
+      <button class="boton sec" onclick="cerrarModal()">Cancelar</button>
+      <button class="boton" onclick="guardarHoraFranja('${fid}')">Guardar</button>
+    </div>`);
+}
+
+function guardarHoraFranja(fid) {
+  const h = val("fHora");
+  if (h && !/^\d{2}:\d{2}$/.test(h)) { aviso("Hora inválida"); return; }
+  datos.pastillero.franjas[fid].hora = h;
+  cerrarModal(); dibujarPastillero(); guardar("pastillero");
+}
+
+function editarMed(fid, i) {
+  const f = FRANJAS.find(x => x.id === fid);
+  const m = i >= 0 ? datos.pastillero.franjas[fid].meds[i] : { nombre: "", dosis: "", aspecto: "", dias: TODOS.slice() };
+  abrirModal(`
+    <h2>${i >= 0 ? "Editar remedio" : "Nuevo remedio"} · ${f.nombre}</h2>
+    <label>Remedio</label>
+    <input type="text" id="mNombre" value="${esc(m.nombre)}" placeholder="Ej.: Enalapril">
+    <label>Dosis</label>
+    <input type="text" id="mDosis" value="${esc(m.dosis)}" placeholder="Ej.: 1 pastilla, media pastilla, 10 mg">
+    <label>Cómo es <span class="opc">(para que mamá la reconozca)</span></label>
+    <input type="text" id="mAspecto" value="${esc(m.aspecto)}" placeholder="Ej.: blanca redonda chica">
+    <label>Qué días va en el casillero</label>
+    ${selectorDias(m.dias || TODOS)}
+    <div class="botones-modal">
+      ${i >= 0 ? `<button class="boton peligro" onclick="borrarMed('${fid}', ${i})">Borrar</button>` : ""}
+      <button class="boton sec" onclick="cerrarModal()">Cancelar</button>
+      <button class="boton" onclick="guardarMed('${fid}', ${i})">Guardar</button>
+    </div>`);
+}
+
+function guardarMed(fid, i) {
+  const m = { nombre: val("mNombre"), dosis: val("mDosis"), aspecto: val("mAspecto"), dias: diasMarcados() };
+  if (!m.nombre) { aviso("Falta el nombre del remedio"); return; }
+  if (m.dias.length === 0) { aviso("Elegí al menos un día"); return; }
+  const lista = datos.pastillero.franjas[fid].meds;
+  if (i >= 0) lista[i] = m; else lista.push(m);
+  cerrarModal(); dibujarPastillero(); guardar("pastillero");
+}
+
+function borrarMed(fid, i) {
+  const lista = datos.pastillero.franjas[fid].meds;
+  if (!confirm("¿Borrar " + lista[i].nombre + "?")) return;
+  lista.splice(i, 1);
+  cerrarModal(); dibujarPastillero(); guardar("pastillero");
+}
+
+// ------------------------------------------------------------------
+// 4) Ajustes
+// ------------------------------------------------------------------
+const FUENTES = [
+  { id: "infobae",    nombre: "Infobae" },
+  { id: "lanacion",   nombre: "La Nación" },
+  { id: "google",     nombre: "Google Noticias (a prueba)" },
+];
+
+function metros(puertas) { return (puertas * 0.75).toFixed(2).replace(".", ",") + " m"; }
+
+function dibujarAjustes() {
+  const a = datos.ajustes, e = estadoEquipo;
+  setTimeout(() => {
+    mostrarEjemploSaludo();
+    const c = document.getElementById("aDecirFecha");
+    if (c) c.onchange = mostrarEjemploSaludo;
+  }, 0);
+  document.getElementById("panelAjustes").innerHTML = `
+    <div class="tarjeta">
+      <div class="grupo-tit"><span class="ico">👵</span>Mamá</div>
+      <div class="sub">XiaoZhi la llama así al saludarla y al recordarle cosas.</div>
+      <label>Nombre</label>
+      <input type="text" id="aMamaNombre" value="${esc(a.mama.nombre)}" placeholder="Ej.: Ema Yolanda">
+      <label>Cómo le gusta que la llamen</label>
+      <input type="text" id="aMamaApodo" value="${esc(a.mama.apodo)}" placeholder="Ej.: Yoli">
+      <label>Cumpleaños <span class="opc">(día/mes/año)</span></label>
+      <input type="text" id="aMamaCumple" value="${esc(a.mama.cumple)}" placeholder="Ej.: 05/05/1943" inputmode="numeric">
+    </div>
+
+    <div class="tarjeta">
+      <div class="grupo-tit"><span class="ico">📡</span>Radar de presencia</div>
+      <div class="sub">Ahora: ${esc(e.presencia || "sin datos")}</div>
+      <label class="interruptor">Usar el radar <input type="checkbox" id="aRadarActivo" ${a.radar.activo ? "checked" : ""}></label>
+      <label>Hasta dónde mira: <span class="valor" id="aAlcanceTxt">${metros(a.radar.alcance)}</span></label>
+      <input type="range" id="aAlcance" min="1" max="8" step="1" value="${a.radar.alcance}"
+        oninput="document.getElementById('aAlcanceTxt').textContent = metros(this.value)">
+      <div class="ayuda">En la mesita de luz alcanza con 1,50 m (la cama). Más lejos detecta mascotas o gente que pasa.</div>
+      <label>Dar la pieza por vacía después de: <span class="valor" id="aSinNadieTxt">${a.radar.sinNadie} s</span></label>
+      <input type="range" id="aSinNadie" min="5" max="120" step="5" value="${a.radar.sinNadie}"
+        oninput="document.getElementById('aSinNadieTxt').textContent = this.value + ' s'">
+      <label class="interruptor">Mandarme cada cambio del radar por Telegram (modo prueba)
+        <input type="checkbox" id="aRadarTg" ${a.radar.avisosTelegram ? "checked" : ""}></label>
+    </div>
+
+    <div class="tarjeta">
+      <div class="grupo-tit"><span class="ico">🌅</span>Saludo al despertar</div>
+      <div class="sub">Cuando se levanta después de dormir, XiaoZhi la saluda con una de estas frases.</div>
+      <label class="interruptor">Saludarla al despertar <input type="checkbox" id="aSaludo" ${a.saludo.activo ? "checked" : ""}></label>
+      <label>Considerar que dormía si estuvo quieta más de: <span class="valor" id="aQuietaTxt">${a.saludo.horasQuieta} h</span></label>
+      <input type="range" id="aQuieta" min="1" max="6" step="1" value="${a.saludo.horasQuieta}"
+        oninput="document.getElementById('aQuietaTxt').textContent = this.value + ' h'">
+      <div class="ayuda">Así también la saluda después de la siesta.</div>
+      <label>Frases para saludarla</label>
+      <div id="listaFrases">${a.saludo.frases.map(f => filaFrase(f)).join("")}</div>
+      <div class="atajos"><button type="button" onclick="agregarFrase()">＋ Agregar otra frase</button></div>
+      <div class="ayuda">Si termina con una pregunta, XiaoZhi se queda escuchando su respuesta.</div>
+      <label class="interruptor">Ir alternando las frases (una distinta cada vez)
+        <input type="checkbox" id="aAlternar" ${a.saludo.alternar ? "checked" : ""}></label>
+      <label class="interruptor">Después del saludo, decirle qué día y qué hora es
+        <input type="checkbox" id="aDecirFecha" ${a.saludo.decirFecha ? "checked" : ""}></label>
+      <div class="ayuda" id="ejemploSaludo"></div>
+    </div>
+
+    <div class="tarjeta">
+      <div class="grupo-tit"><span class="ico">💚</span>Control de bienestar</div>
+      <div class="sub">Te avisa por Telegram si pasa mucho tiempo sin ninguna señal de mamá (radar, botón o voz).</div>
+      <label class="interruptor">Avisarme <input type="checkbox" id="aBienestar" ${a.bienestar.activo ? "checked" : ""}></label>
+      <label>Avisar después de: <span class="valor" id="aHorasTxt">${a.bienestar.horas} h</span> sin señales</label>
+      <input type="range" id="aHoras" min="4" max="24" step="1" value="${a.bienestar.horas}"
+        oninput="document.getElementById('aHorasTxt').textContent = this.value + ' h'">
+    </div>
+
+    <div class="tarjeta">
+      <div class="grupo-tit"><span class="ico">💊</span>Conexión con el pastillero</div>
+      <div class="sub">Estado: ${esc(e.pastillero || "sin datos")}</div>
+      <label class="interruptor">Recordar los remedios según el pastillero
+        <input type="checkbox" id="aPastConectar" ${a.pastillero.conectar ? "checked" : ""}></label>
+      <label>Dirección IP del pastillero</label>
+      <input type="text" id="aPastIp" value="${esc(a.pastillero.ip)}" placeholder="Ej.: 192.168.0.50" inputmode="decimal">
+      <div class="ayuda">Tienen que estar en el mismo WiFi. Si el pastillero responde, sabe si mamá ya confirmó la toma.</div>
+    </div>
+
+    <div class="tarjeta">
+      <div class="grupo-tit"><span class="ico">📰</span>Noticias</div>
+      <div class="sub">Si mamá pregunta <i>"¿qué noticias hay?"</i>, XiaoZhi le cuenta las más importantes de Argentina,
+        evitando policiales y tragedias. Los titulares se actualizan cada 30 minutos.</div>
+      <label class="interruptor">Contarle noticias cuando las pida <input type="checkbox" id="aNotActivo" ${a.noticias.activo ? "checked" : ""}></label>
+      <label class="interruptor">Contárselas también en el saludo de la mañana <input type="checkbox" id="aNotSaludo" ${a.noticias.enSaludo ? "checked" : ""}></label>
+      <label>De dónde sacarlas</label>
+      <select id="aNotFuente">${FUENTES.map(f => `<option value="${f.id}" ${a.noticias.fuente === f.id ? "selected" : ""}>${esc(f.nombre)}</option>`).join("")}</select>
+      <label>Cuántas noticias: <span class="valor" id="aNotCantTxt">${a.noticias.cantidad}</span></label>
+      <input type="range" id="aNotCant" min="1" max="5" step="1" value="${a.noticias.cantidad}"
+        oninput="document.getElementById('aNotCantTxt').textContent = this.value">
+    </div>
+
+    <div class="tarjeta">
+      <div class="grupo-tit"><span class="ico">🔊</span>Volumen de los avisos</div>
+      <label>Volumen: <span class="valor" id="aVolTxt">${a.volumen}%</span></label>
+      <input type="range" id="aVol" min="30" max="100" step="5" value="${a.volumen}"
+        oninput="document.getElementById('aVolTxt').textContent = this.value + '%'">
+    </div>
+
+    <div class="tarjeta">
+      <div class="grupo-tit"><span class="ico">💾</span>Copia de seguridad</div>
+      <div class="sub">Guardá en el celular un archivo con todo (familia, recordatorios, pastillero y ajustes).
+        Si algo falla, lo volvés a cargar con <b>Importar</b>.</div>
+      <div class="botones-modal">
+        <button type="button" class="boton sec" onclick="exportarCopia()">⬇️ Exportar</button>
+        <button type="button" class="boton sec" onclick="document.getElementById('archivoCopia').click()">⬆️ Importar</button>
+      </div>
+      <input type="file" id="archivoCopia" accept=".json,application/json" style="display:none" onchange="leerCopia(this)">
+      <div class="ayuda">Importar también acepta las copias de la versión anterior (XiaoZhi Care).</div>
+    </div>
+
+    <div class="tarjeta">
+      <div class="grupo-tit"><span class="ico">ℹ️</span>Equipo</div>
+      <div class="info">
+        <span>Hora</span><span>${esc(e.hora || "–")}</span>
+        <span>Dirección</span><span>${esc(e.ip ? "http://" + e.ip : "–")}</span>
+        <span>WiFi</span><span>${esc(e.wifi || "–")}</span>
+        <span>Versión</span><span>${esc(e.version || "–")}</span>
+      </div>
+    </div>`;
+}
+
+function filaFrase(f) {
+  return `<div class="frase"><input type="text" class="txtFrase" value="${esc(f)}"
+            placeholder="Ej.: Hola, ¿te despertaste?" oninput="mostrarEjemploSaludo()">
+          <button type="button" class="btn-ico" title="Quitar"
+            onclick="this.parentElement.remove(); mostrarEjemploSaludo()">🗑️</button></div>`;
+}
+function agregarFrase() {
+  document.getElementById("listaFrases").insertAdjacentHTML("beforeend", filaFrase(""));
+  const ins = document.querySelectorAll(".txtFrase");
+  ins[ins.length - 1].focus();
+}
+function mostrarEjemploSaludo() {
+  const el = document.getElementById("ejemploSaludo");
+  if (!el) return;
+  const primera = [...document.querySelectorAll(".txtFrase")].map(i => i.value.trim()).find(x => x) || "";
+  const fecha = document.getElementById("aDecirFecha").checked ? " Hoy es miércoles 25 de noviembre, son las 11 de la mañana." : "";
+  el.innerHTML = primera ? "Ejemplo: <i>“" + esc(primera + fecha) + "”</i>" : "";
+}
+
+function guardarAjustes() {
+  const a = datos.ajustes;
+  const chk = id => document.getElementById(id).checked;
+  const num = id => +document.getElementById(id).value;
+  const ip = val("aPastIp");
+  if (ip && !/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) { aviso("La IP del pastillero no es válida"); return; }
+  if (chk("aPastConectar") && !ip) { aviso("Falta la IP del pastillero"); return; }
+  a.radar = { activo: chk("aRadarActivo"), alcance: num("aAlcance"), sinNadie: num("aSinNadie"), avisosTelegram: chk("aRadarTg") };
+  const frases = [...document.querySelectorAll(".txtFrase")].map(i => i.value.trim()).filter(x => x);
+  if (chk("aSaludo") && frases.length === 0) { aviso("Escribí al menos una frase de saludo"); return; }
+  a.saludo = { activo: chk("aSaludo"), horasQuieta: num("aQuieta"), frases,
+               alternar: chk("aAlternar"), decirFecha: chk("aDecirFecha") };
+  a.bienestar = { activo: chk("aBienestar"), horas: num("aHoras") };
+  a.pastillero = { conectar: chk("aPastConectar"), ip };
+  a.noticias = { activo: chk("aNotActivo"), enSaludo: chk("aNotSaludo"),
+                 fuente: document.getElementById("aNotFuente").value, cantidad: num("aNotCant") };
+  const cumpleMama = val("aMamaCumple");
+  if (cumpleMama && !/^\d{1,2}\/\d{1,2}(\/\d{4})?$/.test(cumpleMama)) { aviso("El cumpleaños de mamá va como día/mes/año"); return; }
+  a.mama = { nombre: val("aMamaNombre"), apodo: val("aMamaApodo"), cumple: cumpleMama };
+  a.volumen = num("aVol");
+  guardar("ajustes");
+}
+
+// ------------------------------------------------------------------
+// Copia de seguridad
+// ------------------------------------------------------------------
+function exportarCopia() {
+  const copia = {
+    schema: "xiaozhi-madre-backup", version: 1, fecha: new Date().toISOString(),
+    familia: datos.familia, recordatorios: datos.recordatorios,
+    pastillero: datos.pastillero, ajustes: datos.ajustes,
+  };
+  const blob = new Blob([JSON.stringify(copia, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "XiaoZhi_Madre_copia_" + new Date().toISOString().slice(0, 10) + ".json";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  aviso("Copia descargada");
+}
+
+// "1973-07-22" -> "22/07/1973"
+function fechaIsoADmy(s) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || "");
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : "";
+}
+
+const MOMENTOS = {
+  fasting: "en ayunas", before_breakfast: "antes del desayuno", after_breakfast: "después del desayuno",
+  before_lunch: "antes del almuerzo", after_lunch: "después del almuerzo",
+  before_dinner: "antes de la cena", after_dinner: "después de la cena", bedtime: "antes de dormir",
+};
+const CASILLEROS = { primero: "manana", segundo: "tarde", tercero: "noche" };
+
+// Convierte una copia de XiaoZhi Care (versión anterior) al formato nuevo
+function convertirCopiaVieja(c) {
+  const d = c.data || {};
+  const familia = (d.people || []).filter(p => p.enabled !== false).map(p => {
+    const otros = (p.aliases || []).filter(x => x && x !== p.nickname);
+    return {
+      nombre: p.name || "", apodo: p.nickname || "", parentesco: p.relationship || "",
+      telefono: p.phone || "", direccion: p.address || "", cumple: fechaIsoADmy(p.birthday),
+      notas: [otros.length ? "También le dicen: " + otros.join(", ") : "", p.notes || ""].filter(x => x).join(". "),
+    };
+  });
+
+  const pastillero = { franjas: { manana: { hora: "", meds: [] }, tarde: { hora: "", meds: [] }, noche: { hora: "", meds: [] } } };
+  const vistos = {};
+  const repetidos = [];
+  for (const r of (d.routines || [])) {
+    if (r.type !== "medication" || r.enabled === false || r.state === "inactive") continue;
+    let extra = {};
+    try { extra = typeof r.data === "string" ? JSON.parse(r.data) : (r.data || {}); } catch (e) {}
+    // Tomas repetidas (mismo remedio a la misma hora): se conservan y se avisa
+    const clave = (r.title || "") + " a las " + (r.time || "?");
+    vistos[clave] = (vistos[clave] || 0) + 1;
+    if (vistos[clave] === 2) repetidos.push(clave);
+    // Casillero: Primero/Segundo/Tercero -> Mañana/Tarde/Noche; si no, por la hora
+    let fid = CASILLEROS[(r.compartment || "").toLowerCase()];
+    if (!fid) {
+      const h = parseInt((r.time || "12").slice(0, 2), 10);
+      fid = h < 13 ? "manana" : (h < 19 ? "tarde" : "noche");
+    }
+    const f = pastillero.franjas[fid];
+    if (r.time && (!f.hora || r.time < f.hora)) f.hora = r.time;
+    const cant = extra.quantity ? (extra.quantity == 1 ? "1 pastilla" : extra.quantity + " pastillas") : "";
+    const dosis = [cant, MOMENTOS[r.moment] || ""].filter(x => x).join(", ");
+    let dias = TODOS.slice();
+    if (Array.isArray(r.weekdays) && r.weekdays.length === 7 && r.weekdays.some(x => !x)) {
+      // En la versión anterior el 0 era el lunes
+      dias = r.weekdays.map((x, i) => x ? i : -1).filter(i => i >= 0);
+    }
+    f.meds.push({ nombre: r.title || "", dosis, aspecto: extra.visual_description || "", dias });
+  }
+
+  const recordatorios = (d.reminders || []).filter(r => r.enabled !== false).map(r => ({
+    texto: r.title || r.text || "", hora: r.time || "", activo: true, repetir: true, avisar: true,
+    dias: Array.isArray(r.weekdays) && r.weekdays.length === 7 ? r.weekdays.map((x, i) => x ? i : -1).filter(i => i >= 0) : TODOS.slice(),
+  })).filter(r => r.texto && /^\d{2}:\d{2}$/.test(r.hora));
+
+  const ajustes = JSON.parse(JSON.stringify(datos.ajustes));
+  if (d.profile) {
+    ajustes.mama = { nombre: d.profile.name || "", apodo: d.profile.nickname || "", cumple: fechaIsoADmy(d.profile.birthday) };
+  }
+  if (d.radio_stations && Array.isArray(d.radio_stations.items)) {
+    ajustes.radios = d.radio_stations.items.map(r => ({ nombre: r.name || "", url: r.url || "" }));
+  }
+  return { familia, recordatorios, pastillero, ajustes, repetidos };
+}
+
+function leerCopia(input) {
+  const archivo = input.files && input.files[0];
+  input.value = "";
+  if (!archivo) return;
+  const lector = new FileReader();
+  lector.onload = () => {
+    let c;
+    try { c = JSON.parse(lector.result); } catch (e) { aviso("El archivo no es una copia válida"); return; }
+    let nuevo;
+    if (c.schema === "xiaozhi-madre-backup") {
+      nuevo = { familia: c.familia || [], recordatorios: c.recordatorios || [],
+                pastillero: c.pastillero || { franjas: {} }, ajustes: c.ajustes || {} };
+    } else if (c.schema === "xiaozhi-care-backup") {
+      nuevo = convertirCopiaVieja(c);
+    } else {
+      aviso("No reconozco este archivo de copia"); return;
+    }
+    confirmarImportacion(nuevo, c.schema === "xiaozhi-care-backup");
+  };
+  lector.readAsText(archivo);
+}
+
+let importacionPendiente = null;
+function confirmarImportacion(nuevo, vieja) {
+  importacionPendiente = nuevo;
+  const meds = ["manana", "tarde", "noche"].reduce((n, f) =>
+    n + ((nuevo.pastillero.franjas && nuevo.pastillero.franjas[f] && nuevo.pastillero.franjas[f].meds) || []).length, 0);
+  const m = nuevo.ajustes && nuevo.ajustes.mama;
+  abrirModal(`
+    <h2>Importar copia</h2>
+    <div class="dato">${vieja ? "Copia de la versión anterior (XiaoZhi Care)." : "Copia de XiaoZhi de mamá."} Se van a cargar:</div>
+    <div class="dato">👨‍👩‍👧 <b>${nuevo.familia.length}</b> personas</div>
+    <div class="dato">⏰ <b>${nuevo.recordatorios.length}</b> recordatorios</div>
+    <div class="dato">💊 <b>${meds}</b> remedios en el pastillero</div>
+    ${m && m.nombre ? `<div class="dato">👵 Mamá: <b>${esc(m.nombre)}</b>${m.apodo ? " (" + esc(m.apodo) + ")" : ""}</div>` : ""}
+    <div class="aviso" style="margin-top:12px">Esto <b>reemplaza</b> lo que hay ahora en el equipo.
+      Si querés, exportá antes una copia de lo actual.</div>
+    ${vieja ? `<div class="ayuda">Los casilleros Primero / Segundo / Tercero pasan a Mañana / Tarde / Noche.
+      Revisá la pestaña Pastillero después de importar.</div>` : ""}
+    ${(nuevo.repetidos || []).length ? `<div class="aviso" style="margin-top:10px">⚠️ Estos remedios aparecen
+      <b>más de una vez</b> en la copia: ${nuevo.repetidos.map(esc).join("; ")}.
+      Se importan todos. Después revisá en Pastillero si son pastillas de más o un duplicado.</div>` : ""}
+    <div class="botones-modal">
+      <button class="boton sec" onclick="cerrarModal()">Cancelar</button>
+      <button class="boton" onclick="aplicarImportacion()">Importar</button>
+    </div>`);
+}
+
+async function aplicarImportacion() {
+  if (!importacionPendiente) return;
+  const n = importacionPendiente;
+  importacionPendiente = null;
+  datos.familia = n.familia;
+  datos.recordatorios = n.recordatorios;
+  datos.pastillero = n.pastillero;
+  datos.ajustes = n.ajustes;
+  delete n.repetidos;
+  normalizar();
+  cerrarModal();
+  dibujarTodo();
+  if (modoDemo) { aviso("Vista previa: importado sólo en pantalla"); return; }
+  for (const s of ["familia", "recordatorios", "pastillero", "ajustes"]) {
+    await guardar(s);
+  }
+  aviso("✓ Copia importada y guardada en el XiaoZhi");
+}
+
+cargar();
+</script>
+</body>
+</html>

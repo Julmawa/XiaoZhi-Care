@@ -1,0 +1,15 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		// La compilación la hace la extensión ESP-IDF.
+		// Se apaga el análisis automático de CMake Tools, que no conoce IDF_PATH
+		// y marca errores falsos en CMakeLists.txt.
+		"cmake.configureOnOpen": false,
+		"cmake.automaticReconfigure": false,
+		"cmake.configureOnEdit": false
+	}
+}

@@ -1,0 +1,72 @@
+menu "Telegram Bot"
+
+config TELEGRAM_ENABLE
+    bool "Enable Telegram bot"
+    default n
+    help
+        Receive and send Telegram messages through a bot created with @BotFather.
+
+config TELEGRAM_BOT_TOKEN
+    string "Bot token (from @BotFather)"
+    default ""
+    depends on TELEGRAM_ENABLE
+    help
+        Example: 123456789:AAH-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+config TELEGRAM_ALLOWED_CHAT_IDS
+    string "Allowed chat IDs (comma separated)"
+    default ""
+    depends on TELEGRAM_ENABLE
+    help
+        Only these chats can send messages to the device. The first one is the
+        default recipient of messages sent by the device. Send /id to the bot
+        to find out your chat_id.
+
+config TELEGRAM_POLL_INTERVAL_MS
+    int "Check for new messages every (ms)"
+    default 3000
+    range 1000 60000
+    depends on TELEGRAM_ENABLE
+
+config TELEGRAM_SPEAK_INCOMING
+    bool "Assistant reads incoming messages aloud"
+    default y
+    depends on TELEGRAM_ENABLE && SEND_WAKE_WORD_DATA
+    help
+        When the device is idle, the incoming message is passed to the assistant
+        so it reads it aloud. Requires "Send Wake Word Data".
+
+config TELEGRAM_WAKE_TEXT
+    string "Short phrase sent to the assistant when a message arrives"
+    default "Leé Telegram"
+    depends on TELEGRAM_SPEAK_INCOMING
+    help
+        Must be short: the server only accepts wake-word length texts.
+
+config TELEGRAM_RECORD_MAX_SECONDS
+    int "Maximum length of a recorded voice message (s)"
+    default 60
+    range 10 120
+    depends on TELEGRAM_ENABLE
+
+config TELEGRAM_VOICE_MAX_SECONDS
+    int "Maximum length of incoming voice messages (s)"
+    default 60
+    range 5 300
+    depends on TELEGRAM_ENABLE
+
+config TELEGRAM_BUTTON_ONLY
+    bool "Button only: ignore the wake word model"
+    default n
+    depends on TELEGRAM_ENABLE
+    help
+        Ignora el modelo de palabra de activación ("Ni hao Xiaozhi"): el equipo
+        sólo se activa con el botón. La lectura de mensajes de Telegram sigue
+        funcionando. Pensado para el equipo de mamá.
+
+config TELEGRAM_NOTIFY_ON_BOOT
+    bool "Send 'online' message when the device starts"
+    default y
+    depends on TELEGRAM_ENABLE
+
+endmenu

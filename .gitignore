@@ -1,0 +1,29 @@
+tmp/
+components/
+managed_components/
+build/
+dist/
+.vscode/
+.devcontainer/
+sdkconfig.old
+sdkconfig
+dependencies.lock
+.env
+releases/
+main/assets/lang_config.h
+main/mmap_generate_emoji.h
+.DS_Store
+.cache
+*.pyc
+*.bin
+mmap_generate_*.h
+.clangd
+
+# --- XiaoZhi Care ---
+# Copias locales: contienen sdkconfig con el token del bot de Telegram
+_backups/
+*.bak
+*.antes_telegram.bak
+# Copias de seguridad exportadas desde la página (datos personales)
+XiaoZhi_Madre_copia_*.json
+XiaoZhi_Care_Backup*.json

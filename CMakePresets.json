@@ -1,0 +1,73 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "Default (development)",
+      "description": "Development configuration",
+      "binaryDir": "${sourceDir}/build/default",
+      "cacheVariables": {
+        "SDKCONFIG": "${sourceDir}/build/default/sdkconfig",
+        "IDF_TARGET": "esp32s3"
+      },
+      "vendor": {
+        "espressif/vscode-esp-idf": {
+          "schemaVersion": 1,
+          "settings": [
+            {
+              "type": "openOCD",
+              "value": {
+                "debugLevel": 2,
+                "configs": [
+                  "board/esp32s3-builtin.cfg"
+                ],
+                "args": []
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "production",
+      "displayName": "Production",
+      "description": "Production configuration",
+      "binaryDir": "${sourceDir}/build/production",
+      "cacheVariables": {
+        "SDKCONFIG": "${sourceDir}/build/production/sdkconfig"
+      }
+    },
+    {
+      "name": "madre",
+      "displayName": "Madre (equipo de mamá, OLED)",
+      "description": "Radio despertador de mamá: OLED 128x64, radar LD2410C, TTP223 en GPIO38",
+      "binaryDir": "${sourceDir}/build/madre",
+      "cacheVariables": {
+        "SDKCONFIG": "${sourceDir}/build/madre/sdkconfig",
+        "IDF_TARGET": "esp32s3"
+      },
+      "vendor": {
+        "espressif/vscode-esp-idf": {
+          "schemaVersion": 1,
+          "settings": [
+            {
+              "type": "openOCD",
+              "value": {
+                "debugLevel": 2,
+                "configs": [
+                  "board/esp32s3-builtin.cfg"
+                ],
+                "args": []
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

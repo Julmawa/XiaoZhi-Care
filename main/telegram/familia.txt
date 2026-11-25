@@ -1,0 +1,33 @@
+# ============================================================
+#  FAMILIA DEL XIAOZHI
+# ============================================================
+#  Las personas de esta lista pueden escribirle y mandarle
+#  audios a mamá por Telegram, y mamá les puede mandar
+#  mensajes a ellas.
+#
+#  Una persona por línea, así:
+#
+#      Nombre = chat_id
+#
+#  - Nombre: como lo dice mamá ("Julio", "Ana", "la nena",
+#    "el doctor"). Es el nombre que ella escucha cuando le
+#    llega un mensaje y el que usa para mandarle uno.
+#  - chat_id: el número de Telegram de esa persona.
+#
+#  Para sumar a alguien, lo más fácil: la persona abre el bot,
+#  toca "Iniciar" y escribe /vincular. Vos tocás "Aprobar" y
+#  el bot te manda este archivo actualizado por Telegram.
+#  Guardalo acá reemplazando el anterior. (Si no lo hacés,
+#  igual funciona: el XiaoZhi lo tiene guardado.)
+#  Con /exportar el bot te lo manda cuando quieras.
+#
+#  Las líneas que empiezan con # no se tienen en cuenta.
+#  Si cambiás este archivo a mano, grabá el equipo de nuevo
+#  (la llama de ESP-IDF).
+# ============================================================
+
+Julio = 5811432588
+
+# Ejemplos (sacales el # del principio y poné el número real):
+# Ana = 123456789
+# La nena = 987654321
