@@ -10,6 +10,7 @@
 #pragma once
 
 #include <cstdint>
+#include <ctime>
 #include <functional>
 #include <mutex>
 #include <string>
@@ -89,6 +90,8 @@ private:
         bool noticias_en_saludo = false;
         std::string noticias_fuente = "infobae";
         int noticias_cantidad = 3;
+        bool resumen_activo = true;
+        std::string resumen_hora = "22:00";
     };
     Ajustes aj_;
     void AplicarAjustes();
@@ -99,6 +102,8 @@ private:
         bool repetir = false;
         bool avisar = false;
         bool remedio = false;
+        std::string hora;          // "21:00" (para el resumen)
+        std::string corto;         // texto corto para el resumen ("remedios de la noche")
         int intentos = 0;          // veces que se dijo
         int64_t creado_ms = 0;
         int64_t proximo_ms = 0;    // cuándo decirlo (otra vez)
@@ -117,6 +122,8 @@ private:
     int64_t sueno_ms_ = 0;                 // tiempo acumulado quieta (los movimientos cortos no lo cortan)
     int64_t nadie_ms_ = 0;                 // tiempo seguido sin nadie
     int64_t ultimo_tick_ms_ = 0;
+    bool estaba_libre_ = true;             // para contar las charlas
+    int64_t activacion_propia_ms_ = 0;     // cuándo XiaoZhi habló por su cuenta (aviso o saludo)
     bool saludo_pendiente_ = false;
     int64_t saludo_desde_ms_ = 0;
     int64_t ultima_conversacion_ms_ = 0;
@@ -138,8 +145,28 @@ private:
     void ActualizarNoticias(int64_t ahora_ms);
     std::string TextoNoticias();
 
+    // ---- Resumen diario por Telegram (y /resumen)
+    struct Diario {
+        time_t desde = 0;                    // desde cuándo cuenta (0 = desde que se encendió)
+        bool desde_arranque = true;
+        std::vector<std::string> sueno;      // "03:10–11:05 (7 h 55 min)"
+        std::vector<std::string> eventos;    // recordatorios, saludos, avisos (en orden)
+        std::vector<std::string> compras;    // lo que anotó con la voz
+        int charlas = 0;
+        time_t ultima_charla = 0;
+        int botones = 0;
+    };
+    std::mutex diario_mutex_;                // orden: mutex_ -> diario_mutex_ (nunca al revés)
+    Diario diario_;
+    int resumen_minuto_ = -1;
+    void Anotar(const std::string& linea);
+    void CortarSueno(int64_t ahora, int64_t fin_hace_ms);
+    void RevisarResumen(const char* hhmm, int minuto);
+    std::string TextoResumen();
+    void RegistrarResumenTelegram();
+
     // ---- Lista de compras (ella la arma con la voz; Julio la pide con /compras)
-    std::string AgregarCompras(const std::string& items);
+    std::string AgregarCompras(const std::string& items, bool de_mama = false);
     std::string QuitarCompra(const std::string& item);
     std::string TextoCompras(bool para_telegram);
     void VaciarCompras();

@@ -21,6 +21,13 @@ private:
     lv_obj_t* emotion_label_ = nullptr;
     lv_obj_t* chat_message_label_ = nullptr;
 
+    // Equipo de mamá: reloj grande en reposo (hora, día y momento del día)
+    lv_obj_t* reloj_panel_ = nullptr;
+    lv_obj_t* reloj_hora_ = nullptr;
+    lv_obj_t* reloj_momento_ = nullptr;
+    int reloj_minuto_ = -1;
+    void CrearReloj();
+
     virtual bool Lock(int timeout_ms = 0) override;
     virtual void Unlock() override;
 
@@ -38,6 +45,7 @@ public:
     virtual void SetTheme(Theme* theme) override;
     virtual bool IsMonochrome() const override { return true; }
     void SetPowerSaveMode(bool on) override;
+    virtual void UpdateStatusBar(bool update_all = false) override;
 };
 
 #endif  // OLED_DISPLAY_H

@@ -147,6 +147,7 @@ void Madre::Start() {
     IniciarReloj();
     RegistrarHerramientas();
     RegistrarComprasTelegram();
+    RegistrarResumenTelegram();
     ultima_senal_ms_ = esp_timer_get_time() / 1000;
     // 12 KB: las noticias usan HTTPS (mbedtls) y necesitan bastante pila
     xTaskCreate(&Madre::TareaEntrada, "madre", 12288, this, 2, nullptr);
@@ -202,6 +203,14 @@ void Madre::Tarea() {
             } else if (PuedeHablar(ahora, true)) {
                 saludo_pendiente_ = false;
                 ESP_LOGI(TAG, "Saludo al despertar");
+                if (RelojEnHora()) {
+                    time_t t = time(nullptr);
+                    struct tm tm;
+                    localtime_r(&t, &tm);
+                    char buf[32];
+                    snprintf(buf, sizeof(buf), "%02d:%02d", tm.tm_hour, tm.tm_min);
+                    Anotar(std::string("☀️ ") + buf + " la saludé cuando se levantó");
+                }
                 Hablar("Me desperté");
                 continue;
             }
@@ -514,6 +523,9 @@ void Madre::AplicarAjustes() {
     if (!Str(n, "fuente").empty()) a.noticias_fuente = Str(n, "fuente");
     if (a.noticias_cantidad < 1) a.noticias_cantidad = 1;
     if (a.noticias_cantidad > 5) a.noticias_cantidad = 5;
+    const cJSON* res = cJSON_GetObjectItemCaseSensitive(raiz, "resumen");
+    a.resumen_activo = Bool(res, "activo", true);
+    if (Str(res, "hora").size() == 5) a.resumen_hora = Str(res, "hora");
     const cJSON* m = cJSON_GetObjectItemCaseSensitive(raiz, "mama");
     a.mama_apodo = Str(m, "apodo");
     if (a.mama_apodo.empty()) {
@@ -548,10 +560,18 @@ void Madre::ActualizarPresencia(int64_t ahora) {
     int64_t dt = ultimo_tick_ms_ ? ahora - ultimo_tick_ms_ : 0;
     ultimo_tick_ms_ = ahora;
 
-    if (Application::GetInstance().GetDeviceState() != kDeviceStateIdle) {
+    bool libre = Application::GetInstance().GetDeviceState() == kDeviceStateIdle;
+    if (estaba_libre_ && !libre && ahora - activacion_propia_ms_ > 15000) {
+        // Empezó una charla (ella tocó el botón o le habló): para el resumen
+        std::lock_guard<std::mutex> lock(diario_mutex_);
+        diario_.charlas++;
+        diario_.ultima_charla = time(nullptr);
+    }
+    estaba_libre_ = libre;
+    if (!libre) {
         ultima_conversacion_ms_ = ahora;
         ultima_senal_ms_ = ahora;
-        sueno_ms_ = 0;              // está despierta, hablando con XiaoZhi
+        CortarSueno(ahora, 0);      // está despierta, hablando con XiaoZhi
     }
 
     bool radar_activo;
@@ -571,7 +591,7 @@ void Madre::ActualizarPresencia(int64_t ahora) {
 
     if (e == 1) {
         nadie_ms_ += dt;
-        if (nadie_ms_ > 10 * 60 * 1000) sueno_ms_ = 0;     // se fue de la pieza
+        if (nadie_ms_ > 10 * 60 * 1000) CortarSueno(ahora, nadie_ms_);   // se fue de la pieza
     } else {
         nadie_ms_ = 0;
     }
@@ -590,7 +610,7 @@ void Madre::ActualizarPresencia(int64_t ahora) {
                 saludo_pendiente_ = true;
                 saludo_desde_ms_ = ahora;
             }
-            sueno_ms_ = 0;
+            CortarSueno(ahora, 20000);
         }
     }
 }
@@ -615,15 +635,21 @@ void Madre::Hablar(const char* frase) {
     vTaskDelay(pdMS_TO_TICKS(1500));
     if (app.GetDeviceState() != kDeviceStateIdle) return;
     ESP_LOGI(TAG, "Activando al asistente: %s", frase);
+    activacion_propia_ms_ = esp_timer_get_time() / 1000;
     app.WakeWordInvoke(frase);
     for (int i = 0; i < 20 && app.GetDeviceState() == kDeviceStateIdle; i++) {
         vTaskDelay(pdMS_TO_TICKS(250));
     }
     ultima_conversacion_ms_ = esp_timer_get_time() / 1000;
+    activacion_propia_ms_ = ultima_conversacion_ms_;
 }
 
 void Madre::NotificarBoton() {
     ultima_senal_ms_ = esp_timer_get_time() / 1000;
+    {
+        std::lock_guard<std::mutex> lock(diario_mutex_);
+        diario_.botones++;
+    }
     ConfirmarAvisos("botón");
 }
 
@@ -655,6 +681,7 @@ void Madre::RevisarBienestar(int64_t ahora) {
                               "el botón ni habló con XiaoZhi.";
             ESP_LOGW(TAG, "%s", msg.c_str());
             TelegramBot::GetInstance().QueueMessage(msg);
+            Anotar("⚠️ " + hora_de(0) + " te avisé que no había señales de mamá");
         }
     } else if (sin_senal < 60 * 1000) {
         bienestar_alertado_ = false;
@@ -675,6 +702,7 @@ void Madre::RevisarAgenda(int64_t ahora) {
     char hhmm[32];
     snprintf(hhmm, sizeof(hhmm), "%02d:%02d", tm.tm_hour, tm.tm_min);
     int hoy = DiaPaginaHoy();
+    RevisarResumen(hhmm, minuto);
 
     std::vector<Aviso> nuevos;
     // Recordatorios de la página
@@ -687,6 +715,7 @@ void Madre::RevisarAgenda(int64_t ahora) {
         if (a.texto.empty()) continue;
         a.repetir = Bool(r, "repetir", false);
         a.avisar = Bool(r, "avisar", false);
+        a.corto = a.texto;
         nuevos.push_back(a);
     }
     cJSON_Delete(raiz);
@@ -713,6 +742,7 @@ void Madre::RevisarAgenda(int64_t ahora) {
         a.repetir = true;
         a.avisar = true;
         a.remedio = true;
+        a.corto = std::string("remedios de la ") + fr[1];
         nuevos.push_back(a);
     }
     cJSON_Delete(raiz);
@@ -720,6 +750,7 @@ void Madre::RevisarAgenda(int64_t ahora) {
     if (nuevos.empty()) return;
     std::lock_guard<std::mutex> lock(mutex_);
     for (auto& a : nuevos) {
+        a.hora = hhmm;
         a.creado_ms = ahora;
         a.proximo_ms = ahora;
         ESP_LOGI(TAG, "Recordatorio de las %s: %s", hhmm, a.texto.c_str());
@@ -729,15 +760,18 @@ void Madre::RevisarAgenda(int64_t ahora) {
 
 void Madre::ProcesarAvisos(int64_t ahora) {
     std::vector<std::string> para_telegram;
+    std::vector<std::string> para_diario;
     std::vector<std::string> decir;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         // Vencidos
         for (auto it = avisos_.begin(); it != avisos_.end();) {
             if (it->intentos >= 3 && ahora >= it->proximo_ms) {
+                para_diario.push_back("⚠️ " + it->hora + " " + it->corto + ": no confirmó (se lo dije 3 veces)");
                 if (it->avisar) para_telegram.push_back("⚠️ Mamá no confirmó este recordatorio (se lo dije 3 veces): " + it->texto);
                 it = avisos_.erase(it);
             } else if (it->intentos == 0 && ahora - it->creado_ms > 2 * 3600 * 1000) {
+                para_diario.push_back("⚠️ " + it->hora + " " + it->corto + ": no se lo pude decir");
                 if (it->avisar) para_telegram.push_back("⚠️ No le pude decir a mamá este recordatorio (no estaba en la pieza o dormía): " + it->texto);
                 it = avisos_.erase(it);
             } else {
@@ -752,6 +786,7 @@ void Madre::ProcesarAvisos(int64_t ahora) {
         ESP_LOGW(TAG, "%s", m.c_str());
         TelegramBot::GetInstance().QueueMessage(m);
     }
+    for (auto& m : para_diario) Anotar(m);
     if (decir.empty() || !PuedeHablar(ahora, false)) return;
 
     {
@@ -762,6 +797,7 @@ void Madre::ProcesarAvisos(int64_t ahora) {
                 aviso_actual_.push_back(it->texto + (it->repetir ? " [pedir confirmación]" : ""));
                 it->intentos++;
                 if (!it->repetir) {
+                    para_diario.push_back("🔔 " + it->hora + " " + it->corto + ": se lo dije");
                     it = avisos_.erase(it);       // se dice una sola vez
                     continue;
                 }
@@ -769,6 +805,9 @@ void Madre::ProcesarAvisos(int64_t ahora) {
             }
             ++it;
         }
+    }
+    for (size_t i = 0; i < para_diario.size(); i++) {
+        if (para_diario[i].rfind("🔔", 0) == 0) Anotar(para_diario[i]);
     }
     Hablar("Tengo un aviso");
 }
@@ -779,6 +818,8 @@ void Madre::ConfirmarAvisos(const char* como) {
     for (auto it = avisos_.begin(); it != avisos_.end();) {
         if (it->intentos >= 1) {
             ESP_LOGI(TAG, "Recordatorio confirmado (%s): %s", como, it->texto.c_str());
+            Anotar("✅ " + it->hora + " " + it->corto + ": confirmó " +
+                   (strcmp(como, "botón") == 0 ? "con el botón" : "con la voz"));
             it = avisos_.erase(it);
         } else {
             ++it;
@@ -1072,7 +1113,7 @@ std::string Recortar(const std::string& s) {
 
 }  // namespace
 
-std::string Madre::AgregarCompras(const std::string& items) {
+std::string Madre::AgregarCompras(const std::string& items, bool de_mama) {
     // Separar por comas y por " y "
     std::vector<std::string> nuevos;
     std::string resto = items;
@@ -1129,6 +1170,10 @@ std::string Madre::AgregarCompras(const std::string& items) {
         cJSON_Delete(raiz);
     }
     ESP_LOGI(TAG, "Compras: agregado [%s] ya estaban [%s]", agregados.c_str(), ya_estaban.c_str());
+    if (de_mama && !agregados.empty()) {
+        std::lock_guard<std::mutex> lock(diario_mutex_);
+        diario_.compras.push_back(agregados);
+    }
     std::string r;
     if (!agregados.empty()) r += "Anotado en la lista de compras: " + agregados + ". ";
     if (!ya_estaban.empty()) r += "Ya estaba en la lista: " + ya_estaban + ". ";
@@ -1219,6 +1264,205 @@ void Madre::RegistrarComprasTelegram() {
             return true;
         }
         return false;
+    });
+}
+
+// ----------------------------------------------------------------------------
+// Resumen diario (llega por Telegram a la hora elegida; también con /resumen)
+// ----------------------------------------------------------------------------
+namespace {
+
+std::string HoraMin(time_t t) {
+    struct tm tm;
+    localtime_r(&t, &tm);
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%02d:%02d", tm.tm_hour, tm.tm_min);
+    return buf;
+}
+
+std::string Duracion(int64_t ms) {
+    int min = (int)(ms / 60000);
+    if (min < 60) return std::to_string(min) + " min";
+    return std::to_string(min / 60) + " h " + std::to_string(min % 60) + " min";
+}
+
+// "mi hijo", "Marcelo", "la gringa" -> nombre del familiar ("Julio"), según la pestaña Familia.
+// Se fija en todos los nombres de la persona, en sus apodos (pueden ser varios: "Marcelo, Marce")
+// y en el parentesco. Si coincide con más de una persona, no elige (XiaoZhi pregunta cuál).
+std::vector<std::string> PalabrasClave(const std::string& texto, bool partir_espacios) {
+    std::vector<std::string> r;
+    std::string t = ClaveCompra(texto);
+    for (const char* sep : {" o ", "/", ";"}) {
+        size_t p;
+        while ((p = t.find(sep)) != std::string::npos) t.replace(p, strlen(sep), ",");
+    }
+    size_t i = 0;
+    while (i <= t.size()) {
+        size_t c = t.find(partir_espacios ? ' ' : ',', i);
+        if (partir_espacios) {
+            size_t c2 = t.find(',', i);
+            if (c2 < c) c = c2;
+        }
+        std::string w = t.substr(i, c == std::string::npos ? std::string::npos : c - i);
+        while (!w.empty() && (w.front() == ' ' || w.front() == '"')) w.erase(0, 1);
+        while (!w.empty() && (w.back() == ' ' || w.back() == '"' || w.back() == '.')) w.pop_back();
+        for (const char* art : {"el ", "la ", "los ", "las ", "mi "}) {
+            if (w.rfind(art, 0) == 0) w.erase(0, strlen(art));
+        }
+        if (w.size() >= 3) r.push_back(w);
+        if (c == std::string::npos) break;
+        i = c + 1;
+    }
+    return r;
+}
+
+std::string NombreSegunFamilia(const std::string& familia_json, const std::string& pedido) {
+    std::string q = " " + ClaveCompra(pedido) + " ";
+    if (q.size() <= 2) return "";
+    std::string encontrado;
+    int cuantos = 0;
+    cJSON* raiz = cJSON_Parse(familia_json.c_str());
+    const cJSON* p;
+    cJSON_ArrayForEach(p, raiz) {
+        std::string nombre = Str(p, "nombre");
+        if (nombre.empty()) continue;
+        std::vector<std::string> claves = PalabrasClave(nombre, true);         // Julio, Marcelo...
+        for (auto& c : PalabrasClave(Str(p, "apodo"), false)) claves.push_back(c);   // marcelo, gringa
+        for (auto& c : PalabrasClave(Str(p, "parentesco"), false)) claves.push_back(c);  // hijo
+        bool coincide = false;
+        for (auto& c : claves) {
+            if (q.find(" " + c + " ") != std::string::npos) { coincide = true; break; }
+        }
+        if (coincide) {
+            encontrado = nombre;
+            cuantos++;
+        }
+    }
+    cJSON_Delete(raiz);
+    return cuantos == 1 ? encontrado : "";
+}
+
+}  // namespace
+
+void Madre::Anotar(const std::string& linea) {
+    std::lock_guard<std::mutex> lock(diario_mutex_);
+    if (diario_.eventos.size() < 40) diario_.eventos.push_back(linea);
+}
+
+// Termina un período de descanso (quieta en la cama). Se anota si duró 30 minutos o más.
+void Madre::CortarSueno(int64_t ahora, int64_t fin_hace_ms) {
+    (void)ahora;
+    int64_t duro = sueno_ms_;
+    sueno_ms_ = 0;
+    if (duro < 30 * 60 * 1000 || !RelojEnHora()) return;
+    time_t fin = time(nullptr) - (time_t)(fin_hace_ms / 1000);
+    time_t inicio = fin - (time_t)(duro / 1000);
+    std::string linea = HoraMin(inicio) + " a " + HoraMin(fin) + " (" + Duracion(duro) + ")";
+    ESP_LOGI(TAG, "Descanso: %s", linea.c_str());
+    std::lock_guard<std::mutex> lock(diario_mutex_);
+    if (diario_.sueno.size() < 12) diario_.sueno.push_back(linea);
+}
+
+void Madre::RevisarResumen(const char* hhmm, int minuto) {
+    bool activo;
+    std::string hora;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        activo = aj_.resumen_activo;
+        hora = aj_.resumen_hora;
+    }
+    if (!activo || hora != hhmm || resumen_minuto_ == minuto) return;
+    resumen_minuto_ = minuto;
+    std::string texto = TextoResumen();
+    ESP_LOGI(TAG, "Resumen diario enviado");
+    TelegramBot::GetInstance().QueueMessage(texto);
+    std::lock_guard<std::mutex> lock(diario_mutex_);
+    diario_ = Diario();
+    diario_.desde = time(nullptr);
+    diario_.desde_arranque = false;
+}
+
+std::string Madre::TextoResumen() {
+    std::string nombre;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        nombre = aj_.mama_apodo.empty() ? "mamá" : aj_.mama_apodo;
+    }
+    int64_t ahora = esp_timer_get_time() / 1000;
+    int64_t quieta = sueno_ms_;
+    int64_t sin_senal = ahora - ultima_senal_ms_;
+    std::string presencia = presencia_ ? presencia_() : "";
+
+    Diario d;
+    {
+        std::lock_guard<std::mutex> lock(diario_mutex_);
+        d = diario_;
+    }
+    std::string s = "📋 Resumen de " + nombre;
+    if (RelojEnHora()) {
+        time_t t = time(nullptr);
+        struct tm tm;
+        localtime_r(&t, &tm);
+        char buf[48];
+        snprintf(buf, sizeof(buf), " — %s %d/%d, %02d:%02d", kDias[tm.tm_wday], tm.tm_mday, tm.tm_mon + 1,
+                 tm.tm_hour, tm.tm_min);
+        s += buf;
+    }
+    if (d.desde_arranque) {
+        s += "\n(desde que se encendió el equipo)";
+    } else {
+        struct tm tm;
+        localtime_r(&d.desde, &tm);
+        s += std::string("\n(desde las ") + HoraMin(d.desde) + " del " + kDias[tm.tm_wday] + ")";
+    }
+
+    s += "\n\n😴 Descanso (quieta en la cama):";
+    if (d.sueno.empty() && quieta < 30 * 60 * 1000) s += "\n• Nada largo para anotar.";
+    for (auto& l : d.sueno) s += "\n• " + l;
+    if (quieta >= 30 * 60 * 1000 && RelojEnHora()) {
+        s += "\n• Ahora: descansando desde las " + HoraMin(time(nullptr) - (time_t)(quieta / 1000)) +
+             " (" + Duracion(quieta) + ")";
+    }
+
+    s += "\n\n💬 Charlas con XiaoZhi: ";
+    if (d.charlas == 0) {
+        s += "ninguna.";
+    } else {
+        s += std::to_string(d.charlas) + (d.charlas == 1 ? " vez" : " veces");
+        if (d.ultima_charla && RelojEnHora()) s += " (la última a las " + HoraMin(d.ultima_charla) + ")";
+        s += ".";
+    }
+    s += "\n👆 Tocó el botón: " + std::to_string(d.botones) + (d.botones == 1 ? " vez." : " veces.");
+
+    s += "\n\n🔔 Recordatorios y avisos:";
+    if (d.eventos.empty()) s += "\n• No hubo.";
+    for (auto& l : d.eventos) s += "\n• " + l;
+
+    if (!d.compras.empty()) {
+        s += "\n\n🛒 Anotó en compras: ";
+        for (size_t i = 0; i < d.compras.size(); i++) s += (i ? ", " : "") + d.compras[i];
+        s += ". (/compras para ver la lista)";
+    }
+
+    s += "\n\n📡 Ahora: ";
+    s += presencia.empty() ? std::string("radar sin datos") : presencia;
+    if (sin_senal > 60 * 1000) s += "; última señal de ella hace " + Duracion(sin_senal);
+    s += ".";
+    return s;
+}
+
+void Madre::RegistrarResumenTelegram() {
+    auto& tg = TelegramBot::GetInstance();
+    tg.AddAdminCommand(
+        [this](const std::string& cmd, const std::string&, std::string& texto, std::string&) {
+            if (cmd != "/resumen") return false;
+            texto = TextoResumen();
+            return true;
+        },
+        "/resumen - cómo viene el día de mamá (descanso, charlas, recordatorios, compras)");
+    // "decile a mi hijo que me llame": el apodo o el parentesco de la pestaña Familia
+    tg.SetNameResolver([this](const std::string& pedido) {
+        return NombreSegunFamilia(GetSeccion("familia"), pedido);
     });
 }
 
@@ -1409,7 +1653,7 @@ void Madre::RegistrarHerramientas() {
         "you noted. Her son Julio sees the list on Telegram and does the shopping.",
         PropertyList({Property("items", kPropertyTypeString)}),
         [this](const PropertyList& props) -> ReturnValue {
-            return AgregarCompras(props["items"].value<std::string>());
+            return AgregarCompras(props["items"].value<std::string>(), true);
         });
 
     mcp.AddTool("self.madre.shopping_list",

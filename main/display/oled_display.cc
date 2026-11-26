@@ -1,12 +1,16 @@
 #include "oled_display.h"
+#include "application.h"
 #include "assets/lang_config.h"
 #include "lvgl_font.h"
 #include "lvgl_theme.h"
 #include "settings.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <ctime>
 #include <string>
 
+#include <sdkconfig.h>
 #include <esp_err.h>
 #include <esp_log.h>
 #include <esp_lvgl_port.h>
@@ -19,6 +23,9 @@ LV_FONT_DECLARE(BUILTIN_TEXT_FONT);
 LV_FONT_DECLARE(BUILTIN_ICON_FONT);
 LV_FONT_DECLARE(font_material_symbols_30_1);
 LV_FONT_DECLARE(font_noto_emoji_30_1);
+#if CONFIG_MADRE_ENABLE
+LV_FONT_DECLARE(font_noto_sans_basic_30_4);
+#endif
 
 OledDisplay::OledDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel,
                          int width, int height, bool mirror_x, bool mirror_y)
@@ -302,6 +309,92 @@ void OledDisplay::SetupUI_128x64() {
     lv_obj_set_style_text_color(low_battery_label_, lv_color_white(), 0);
     lv_obj_center(low_battery_label_);
     lv_obj_add_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN);
+
+#if CONFIG_MADRE_ENABLE
+    CrearReloj();
+#endif
+}
+
+// ----------------------------------------------------------------------------
+// Equipo de mamá: en reposo, la pantalla es un reloj grande.
+//   arriba (barra):  "Miércoles 25/11"
+//   centro:          "19:12"
+//   abajo:           "de la noche"
+// Cuando habla o escucha, vuelve la pantalla normal de XiaoZhi.
+// ----------------------------------------------------------------------------
+void OledDisplay::CrearReloj() {
+#if CONFIG_MADRE_ENABLE
+    auto screen = lv_screen_active();
+    reloj_panel_ = lv_obj_create(screen);
+    lv_obj_set_size(reloj_panel_, LV_HOR_RES, LV_VER_RES - 16);
+    lv_obj_align(reloj_panel_, LV_ALIGN_TOP_LEFT, 0, 16);
+    lv_obj_set_style_radius(reloj_panel_, 0, 0);
+    lv_obj_set_style_border_width(reloj_panel_, 0, 0);
+    lv_obj_set_style_pad_all(reloj_panel_, 0, 0);
+    lv_obj_set_style_bg_color(reloj_panel_, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(reloj_panel_, LV_OPA_COVER, 0);
+    lv_obj_set_scrollbar_mode(reloj_panel_, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_remove_flag(reloj_panel_, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(reloj_panel_, LV_OBJ_FLAG_CLICKABLE);
+
+    // La fuente de 30 px reserva mucho lugar arriba (para otros idiomas): se sube el texto
+    reloj_hora_ = lv_label_create(reloj_panel_);
+    lv_obj_set_style_text_font(reloj_hora_, &font_noto_sans_basic_30_4, 0);
+    lv_obj_set_style_text_color(reloj_hora_, lv_color_black(), 0);
+    lv_label_set_text(reloj_hora_, "");
+    lv_obj_align(reloj_hora_, LV_ALIGN_TOP_MID, 0, 4);
+
+    reloj_momento_ = lv_label_create(reloj_panel_);
+    lv_obj_set_style_text_color(reloj_momento_, lv_color_black(), 0);
+    lv_label_set_text(reloj_momento_, "");
+    lv_obj_align(reloj_momento_, LV_ALIGN_BOTTOM_MID, 0, -1);
+
+    lv_obj_add_flag(reloj_panel_, LV_OBJ_FLAG_HIDDEN);
+    // Las ventanas emergentes (batería) van por encima del reloj
+    if (low_battery_popup_ != nullptr) lv_obj_move_to_index(low_battery_popup_, -1);
+#endif
+}
+
+void OledDisplay::UpdateStatusBar(bool update_all) {
+    LvglDisplay::UpdateStatusBar(update_all);
+#if CONFIG_MADRE_ENABLE
+    if (reloj_panel_ == nullptr) return;
+    static const char* const kDias[] = {"Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"};
+
+    bool en_reposo = Application::GetInstance().GetDeviceState() == kDeviceStateIdle;
+    time_t ahora = time(nullptr);
+    struct tm tm;
+    localtime_r(&ahora, &tm);
+    bool en_hora = tm.tm_year + 1900 >= 2025;
+
+    if (!en_reposo || !en_hora) {
+        if (reloj_minuto_ != -1) {
+            DisplayLockGuard lock(this);
+            lv_obj_add_flag(reloj_panel_, LV_OBJ_FLAG_HIDDEN);
+        }
+        reloj_minuto_ = -1;
+        return;
+    }
+    int minuto = tm.tm_hour * 60 + tm.tm_min;
+    if (!update_all && minuto == reloj_minuto_) return;
+    reloj_minuto_ = minuto;
+
+    char hora[16];
+    snprintf(hora, sizeof(hora), "%d:%02d", tm.tm_hour, tm.tm_min);
+    const char* momento = tm.tm_hour < 6    ? "de madrugada"
+                          : tm.tm_hour < 12 ? "de la mañana"
+                          : tm.tm_hour < 14 ? "del mediodía"
+                          : tm.tm_hour < 20 ? "de la tarde"
+                                            : "de la noche";
+    char fecha[40];
+    snprintf(fecha, sizeof(fecha), "%s %d/%d", kDias[tm.tm_wday], tm.tm_mday, tm.tm_mon + 1);
+
+    SetStatus(fecha);    // en la barra de arriba (la hora ya está grande)
+    DisplayLockGuard lock(this);
+    lv_label_set_text(reloj_hora_, hora);
+    lv_label_set_text(reloj_momento_, momento);
+    lv_obj_remove_flag(reloj_panel_, LV_OBJ_FLAG_HIDDEN);
+#endif
 }
 
 void OledDisplay::SetupUI_128x32() {

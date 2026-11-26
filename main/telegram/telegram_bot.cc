@@ -966,6 +966,9 @@ bool TelegramBot::ResolveRecipients(const std::string& to, std::vector<std::stri
     ids.clear();
     names.clear();
     std::string q = Normalize(to);
+    // "mi hijo", "Julito"...: el equipo de mamá sabe a quién se refiere (pestaña Familia)
+    std::string alias;
+    if (!q.empty() && name_resolver_) alias = Normalize(name_resolver_(to));
     std::lock_guard<std::mutex> lock(data_mutex_);
     if (contacts_.empty()) {
         error = "There are no family members authorized yet.";
@@ -999,6 +1002,19 @@ bool TelegramBot::ResolveRecipients(const std::string& to, std::vector<std::stri
                 ids.push_back(c.chat_id);
                 if (!names.empty()) names += ", ";
                 names += c.name;
+            }
+        }
+        if (ids.empty() && !alias.empty()) {
+            for (auto& c : contacts_) {
+                std::string n = Normalize(c.name);
+                if (n.empty()) continue;
+                std::string first = n.substr(0, n.find(' '));
+                // "Julio Marcelo Pérez" (Familia) == contacto "Julio" o "Marcelo"
+                if (n == alias || (" " + alias + " ").find(" " + first + " ") != std::string::npos) {
+                    ids.push_back(c.chat_id);
+                    if (!names.empty()) names += ", ";
+                    names += c.name;
+                }
             }
         }
         if (!ids.empty()) return true;
@@ -1574,6 +1590,15 @@ void TelegramBot::RegisterMcpTools() {
     auto& mcp = McpServer::GetInstance();
 
     mcp.AddTool("self.telegram.send_voice_message",
+#if CONFIG_MADRE_ENABLE
+        "Send a VOICE recording of the user by Telegram to a family member (or to all of them). Use it "
+        "ONLY when the user explicitly asks for an audio or voice message ('mandale un audio a Julio', "
+        "'quiero grabarle un mensaje'). For any other message use self.telegram.send_message. "
+        "'to' = the name or relationship as the user said it ('Julio', 'mi hijo', 'la nena'), or 'todos'; "
+        "empty if not said. If it returns an error, ask the user who it is for, as the error explains. "
+        "If it returns OK, say EXACTLY the Spanish sentence it returns and nothing else. The device then "
+        "beeps, records the user's voice until they press the button, and sends it.",
+#else
         "Send a message by Telegram to a family member (or to all of them) as a VOICE recording of "
         "the user. This is the DEFAULT way to send any message: use it whenever the user wants to "
         "send, tell or write something to someone (e.g. 'mandale un mensaje a Julio', 'decile a Ana "
@@ -1583,6 +1608,7 @@ void TelegramBot::RegisterMcpTools() {
         "who it is for, as the error explains. If it returns OK, say EXACTLY the Spanish sentence "
         "it returns and nothing else. The device then beeps, records the user's voice until they "
         "press the button, and sends it.",
+#endif
         PropertyList({Property("to", kPropertyTypeString, std::string(""))}),
         [this](const PropertyList& properties) -> ReturnValue {
             if (record_pending_ || recording_) {
@@ -1606,11 +1632,23 @@ void TelegramBot::RegisterMcpTools() {
         });
 
     mcp.AddTool("self.telegram.send_message",
+#if CONFIG_MADRE_ENABLE
+        "Send a text message by Telegram from the user to a family member, or to all ('todos'). This is "
+        "the DEFAULT way to pass on any message or request: use it whenever she asks to tell, ask or "
+        "let someone know something ('decile a mi hijo que me llame', 'avisale a Julio que se terminó "
+        "el gas', 'preguntale a Sofi si viene el domingo', 'mandale un mensaje a la tía Elsa'). "
+        "'to' = the name, nickname or relationship exactly as she said it ('mi hijo', 'Julito', "
+        "'la nena'), 'todos', or empty if not said. 'text' = the message in Spanish, short and clear, "
+        "in first person as if she wrote it (e.g. 'Hola hijo, llamame cuando puedas'). Call it right "
+        "away; if it returns an error, ask her who it is for, as the error explains. Then confirm "
+        "briefly, e.g. 'Listo, ya le mandé el mensaje a Julio'.",
+#else
         "Send a WRITTEN text message by Telegram to a family member or to all ('todos'). Use it "
         "ONLY when the user explicitly asks for a written / text message ('mensaje escrito', "
         "'mensaje de texto', 'escribile'). For any other request to send a message use "
         "self.telegram.send_voice_message. 'to' = name as the user said it, 'todos', or empty if "
         "not said. Write the text in Spanish, in first person as the user said it.",
+#endif
         PropertyList({Property("to", kPropertyTypeString, std::string("")),
                       Property("text", kPropertyTypeString)}),
         [this](const PropertyList& properties) -> ReturnValue {

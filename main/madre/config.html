@@ -271,6 +271,7 @@ const AJUSTES_BASE = {
                      "¿Estás despierta? ¿Necesitás algo?",
                      "Buen día, ¿cómo dormiste?"] },
   bienestar: { activo: true, horas: 14 },
+  resumen: { activo: true, hora: "22:00" },
   pastillero: { conectar: false, ip: "" },
   noticias: { activo: true, enSaludo: false, fuente: "infobae", cantidad: 3 },
   mama: { nombre: "", apodo: "", cumple: "" },
@@ -816,6 +817,16 @@ function dibujarAjustes() {
     </div>
 
     <div class="tarjeta">
+      <div class="grupo-tit"><span class="ico">📋</span>Resumen diario</div>
+      <div class="sub">Todos los días, a la hora que elijas, te llega por Telegram cómo fue el día de mamá:
+        cuándo durmió y se levantó, los recordatorios que confirmó, lo que anotó en compras y cuánto charló con XiaoZhi.
+        También lo podés pedir cuando quieras con <b>/resumen</b>.</div>
+      <label class="interruptor">Mandarme el resumen <input type="checkbox" id="aResumen" ${a.resumen.activo ? "checked" : ""}></label>
+      <label>Hora del resumen</label>
+      <input type="time" id="aResumenHora" value="${esc(a.resumen.hora)}">
+    </div>
+
+    <div class="tarjeta">
       <div class="grupo-tit"><span class="ico">💊</span>Conexión con el pastillero</div>
       <div class="sub">Estado: ${esc(e.pastillero || "sin datos")}</div>
       <label class="interruptor">Recordar los remedios según el pastillero
@@ -900,6 +911,9 @@ function guardarAjustes() {
   a.saludo = { activo: chk("aSaludo"), horasQuieta: num("aQuieta"), frases,
                alternar: chk("aAlternar"), decirFecha: chk("aDecirFecha") };
   a.bienestar = { activo: chk("aBienestar"), horas: num("aHoras") };
+  const horaResumen = val("aResumenHora");
+  if (chk("aResumen") && !/^\d{2}:\d{2}$/.test(horaResumen)) { aviso("Elegí la hora del resumen"); return; }
+  a.resumen = { activo: chk("aResumen"), hora: horaResumen || "22:00" };
   a.pastillero = { conectar: chk("aPastConectar"), ip };
   a.noticias = { activo: chk("aNotActivo"), enSaludo: chk("aNotSaludo"),
                  fuente: document.getElementById("aNotFuente").value, cantidad: num("aNotCant") };

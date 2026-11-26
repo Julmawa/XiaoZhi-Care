@@ -76,6 +76,9 @@ public:
     using BotonExtra = std::function<bool(const std::string& data, std::string& texto, std::string& botones)>;
     void AddAdminCommand(ComandoExtra f, const std::string& ayuda);
     void AddCallbackHandler(BotonExtra f);
+    // Traduce cómo la usuaria nombra a alguien ("mi hijo", "Julito") al nombre del contacto ("Julio").
+    // Devuelve vacío si no sabe.
+    void SetNameResolver(std::function<std::string(const std::string&)> f) { name_resolver_ = std::move(f); }
 
 private:
     TelegramBot() = default;
@@ -137,6 +140,7 @@ private:
     std::vector<ComandoExtra> comandos_extra_;
     std::vector<std::string> ayuda_extra_;
     std::vector<BotonExtra> botones_extra_;
+    std::function<std::string(const std::string&)> name_resolver_;
 
     std::mutex http_mutex_;   // una sola conexión TLS a la vez (ahorra RAM)
     std::mutex data_mutex_;   // protege recent_ y announce_pending_
