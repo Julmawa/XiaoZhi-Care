@@ -86,6 +86,13 @@
   }
   .chip.on { background: var(--verde-claro); color: var(--verde); font-weight: 600; }
   .apagado { opacity: .5; }
+  .grupo-rec { margin: 22px 0 8px; }
+  .estado { display: inline-block; margin-top: 6px; padding: 4px 10px; border-radius: 999px; font-size: 15px;
+            font-weight: 600; background: #eef0f3; color: #4a5160; }
+  .estado.ok { background: var(--verde-claro); color: var(--verde); }
+  .estado.mal { background: #fdecea; color: #b3261e; }
+  .estado.espera { background: #fff4e0; color: #9a5b00; }
+  .tarjeta.pasado { opacity: .8; }
   .vacio { text-align: center; color: var(--suave); padding: 30px 10px; }
   .boton {
     border: 0; border-radius: 12px; padding: 14px 18px; font: inherit; font-weight: 600;
@@ -206,8 +213,14 @@
   <section class="seccion" id="sec-recordatorios">
     <p class="intro">A la hora indicada XiaoZhi se lo dice a mamá con su voz.
       Si está dormida o no está en la pieza, espera a que vuelva.</p>
+    <div class="grupo-tit grupo-rec"><span class="ico">⏰</span>Agendados en la página</div>
     <div id="listaRecordatorios"></div>
     <button class="boton agregar" onclick="editarRecordatorio(-1)">＋ Agregar recordatorio</button>
+
+    <div class="grupo-tit grupo-rec"><span class="ico">📲</span>Enviados por Telegram</div>
+    <div class="sub" style="margin-bottom:8px">Los que mandás con <b>/recordar</b>. Acá ves si se los dijo,
+      si los confirmó o si quedaron pendientes. Se guardan 7 días después de sonar.</div>
+    <div id="listaRecTelegram"></div>
 
     <div class="tarjeta" style="margin-top:18px">
       <div class="grupo-tit"><span class="ico">🛒</span>Lista de compras</div>
@@ -519,25 +532,86 @@ function borrarPersona(i) {
 // ------------------------------------------------------------------
 // 2) Recordatorios
 // ------------------------------------------------------------------
+const ESTADOS = {
+  dicho: ["🔔 Se lo dijo", ""],
+  esperando: ["🔔 Se lo dijo, esperando que confirme", "espera"],
+  confirmo_boton: ["✅ Confirmó con el botón", "ok"],
+  confirmo_voz: ["✅ Confirmó con la voz", "ok"],
+  no_confirmo: ["⚠️ No confirmó (se lo dijo 3 veces)", "mal"],
+  no_dicho: ["⚠️ No se lo pudo decir (no estaba o dormía)", "mal"],
+};
+function hoyIso() {
+  const d = new Date();
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
 function dibujarRecordatorios() {
   const cont = document.getElementById("listaRecordatorios");
-  if (datos.recordatorios.length === 0) {
+  const todos = datos.recordatorios.map((r, i) => ({ r, i }));
+  const web = todos.filter(x => x.r.origen !== "telegram");
+  const tele = todos.filter(x => x.r.origen === "telegram");
+  dibujarRecTelegram(tele);
+  if (web.length === 0) {
     cont.innerHTML = '<div class="tarjeta vacio">No hay recordatorios.</div>';
     return;
   }
-  const orden = datos.recordatorios.map((r, i) => ({ r, i })).sort((a, b) => a.r.hora.localeCompare(b.r.hora));
+  const clave = r => (r.fecha ? "1" + r.fecha : "0") + (r.hora || "");
+  const orden = web.sort((a, b) => clave(a.r).localeCompare(clave(b.r)));
   cont.innerHTML = orden.map(({ r, i }) => `
     <div class="tarjeta ${r.activo ? "" : "apagado"}"><div class="fila">
       <div class="cuerpo">
         <div class="hora-grande">${esc(r.hora)}</div>
         <div class="titulo">${esc(r.texto)}</div>
-        <div class="sub">${esc(textoDias(r.dias))}${r.activo ? "" : " · apagado"}</div>
+        <div class="sub">${r.fecha ? "📅 Una sola vez: " + esc(fechaLinda(r.fecha)) : esc(textoDias(r.dias))}${r.activo ? "" : " · apagado"}</div>
         ${r.repetir ? `<div class="dato sub">🔁 Repite hasta que toque el botón${r.avisar ? " · 📲 te avisa si no confirma" : ""}</div>` : ""}
       </div>
       <div class="acciones">
         <button class="btn-ico" onclick="editarRecordatorio(${i})" title="Editar">✏️</button>
       </div>
     </div></div>`).join("");
+}
+
+// Los que mandó Julio por Telegram: próximos primero, después los que ya sonaron (más nuevos arriba)
+function dibujarRecTelegram(lista) {
+  const cont = document.getElementById("listaRecTelegram");
+  if (lista.length === 0) {
+    cont.innerHTML = `<div class="tarjeta vacio">Todavía no mandaste ninguno.<br>
+      Probá en Telegram: <b>/recordar mañana 10:00 Turno con el médico</b></div>`;
+    return;
+  }
+  const hoy = hoyIso();
+  const ahora = new Date();
+  const hhmm = String(ahora.getHours()).padStart(2, "0") + ":" + String(ahora.getMinutes()).padStart(2, "0");
+  const yaPaso = r => r.fecha && (r.fecha < hoy || (r.fecha === hoy && r.hora <= hhmm));
+  const proximos = lista.filter(x => !yaPaso(x.r))
+    .sort((a, b) => ((a.r.fecha || "0") + a.r.hora).localeCompare((b.r.fecha || "0") + b.r.hora));
+  const pasados = lista.filter(x => yaPaso(x.r))
+    .sort((a, b) => (b.r.fecha + b.r.hora).localeCompare(a.r.fecha + a.r.hora));
+  const tarjeta = ({ r, i }, paso) => {
+    const e = ESTADOS[r.estado];
+    let estado;
+    if (e) estado = `<span class="estado ${e[1]}">${e[0]}${r.estado_cuando ? " · " + esc(r.estado_cuando) : ""}</span>`;
+    else if (paso) estado = `<span class="estado mal">⚠️ No sonó (el equipo estaba apagado o sin hora)</span>`;
+    else estado = `<span class="estado">⏳ Pendiente</span>`;
+    const cuando = r.fecha ? "📅 " + esc(fechaLinda(r.fecha)) : "🔁 " + esc(textoDias(r.dias));
+    return `
+    <div class="tarjeta ${paso ? "pasado" : ""} ${r.activo ? "" : "apagado"}"><div class="fila">
+      <div class="cuerpo">
+        <div class="hora-grande">${esc(r.hora)}</div>
+        <div class="titulo">${esc(r.texto)}</div>
+        <div class="sub">${cuando}${r.activo ? "" : " · apagado"}</div>
+        ${estado}
+      </div>
+      <div class="acciones">
+        <button class="btn-ico" onclick="editarRecordatorio(${i})" title="Editar">✏️</button>
+      </div>
+    </div></div>`;
+  };
+  let html = proximos.map(x => tarjeta(x, false)).join("");
+  if (pasados.length) {
+    html += `<div class="sub" style="margin:14px 0 6px;font-weight:600">Ya sonaron (últimos 7 días)</div>`;
+    html += pasados.map(x => tarjeta(x, true)).join("");
+  }
+  cont.innerHTML = html;
 }
 
 function dibujarCompras() {
@@ -579,8 +653,22 @@ function editarRecordatorio(i) {
     <div class="ayuda">Escribilo corto. XiaoZhi lo dice con sus palabras: "Te recuerdo que…"</div>
     <label>Hora</label>
     <input type="time" id="rHora" value="${esc(r.hora)}">
-    <label>Qué días</label>
-    ${selectorDias(r.dias || [])}
+    <label>Cuándo</label>
+    <div class="dias" id="selCuando">
+      <button type="button" class="${r.fecha ? "" : "on"}" data-c="semana" style="flex:1"
+        onclick="elegirCuando('semana')">Todas las semanas</button>
+      <button type="button" class="${r.fecha ? "on" : ""}" data-c="fecha" style="flex:1"
+        onclick="elegirCuando('fecha')">Una sola vez</button>
+    </div>
+    <div id="filaDias" style="display:${r.fecha ? "none" : "block"}">
+      <label>Qué días</label>
+      ${selectorDias(r.dias || TODOS.slice())}
+    </div>
+    <div id="filaFecha" style="display:${r.fecha ? "block" : "none"}">
+      <label>Fecha</label>
+      <input type="date" id="rFecha" value="${esc(r.fecha || "")}">
+      <div class="ayuda">Suena una sola vez ese día. Al día siguiente se borra solo.</div>
+    </div>
     <label class="check"><input type="checkbox" id="rRepetir" ${r.repetir ? "checked" : ""}
       onchange="document.getElementById('rAvisarFila').style.display=this.checked?'flex':'none'">
       Repetir cada 10 minutos (hasta 3 veces) hasta que toque el botón</label>
@@ -596,16 +684,39 @@ function editarRecordatorio(i) {
     </div>`);
 }
 
+function elegirCuando(c) {
+  document.querySelectorAll("#selCuando button").forEach(b => b.classList.toggle("on", b.dataset.c === c));
+  document.getElementById("filaDias").style.display = c === "semana" ? "block" : "none";
+  document.getElementById("filaFecha").style.display = c === "fecha" ? "block" : "none";
+}
+function fechaLinda(iso) {
+  const p = (iso || "").split("-").map(Number);
+  if (p.length !== 3) return iso;
+  const d = new Date(p[0], p[1] - 1, p[2]);
+  const nombres = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+  return nombres[d.getDay()] + " " + p[2] + "/" + p[1] + (p[0] !== new Date().getFullYear() ? "/" + p[0] : "");
+}
+
 function guardarRecordatorio(i) {
+  const anterior = i >= 0 ? datos.recordatorios[i] : {};
+  const unaVez = document.querySelector('#selCuando button[data-c="fecha"]').classList.contains("on");
   const r = {
-    texto: val("rTexto"), hora: val("rHora"), dias: diasMarcados(),
+    texto: val("rTexto"), hora: val("rHora"),
     repetir: document.getElementById("rRepetir").checked,
     avisar: document.getElementById("rRepetir").checked && document.getElementById("rAvisar").checked,
     activo: document.getElementById("rActivo").checked,
   };
+  if (anterior.id) r.id = anterior.id;
+  if (anterior.origen) r.origen = anterior.origen;
+  if (anterior.estado && anterior.fecha === val("rFecha") && anterior.hora === r.hora) {
+    r.estado = anterior.estado;
+    if (anterior.estado_cuando) r.estado_cuando = anterior.estado_cuando;
+  }
+  if (unaVez) r.fecha = val("rFecha"); else r.dias = diasMarcados();
   if (!r.texto) { aviso("Falta qué tiene que decir"); return; }
   if (!/^\d{2}:\d{2}$/.test(r.hora)) { aviso("Falta la hora"); return; }
-  if (r.dias.length === 0) { aviso("Elegí al menos un día"); return; }
+  if (unaVez && !/^\d{4}-\d{2}-\d{2}$/.test(r.fecha)) { aviso("Elegí la fecha"); return; }
+  if (!unaVez && r.dias.length === 0) { aviso("Elegí al menos un día"); return; }
   if (i >= 0) datos.recordatorios[i] = r; else datos.recordatorios.push(r);
   cerrarModal(); dibujarRecordatorios(); guardar("recordatorios");
 }

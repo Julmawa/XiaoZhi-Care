@@ -16,6 +16,8 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <ctime>
 
@@ -107,6 +109,22 @@ std::string TextoDias(const cJSON* obj) {
     return s;
 }
 
+// "2026-11-28" -> "viernes 28/11"
+std::string FechaLinda(const std::string& iso) {
+    int y = 0, m = 0, d = 0;
+    if (sscanf(iso.c_str(), "%d-%d-%d", &y, &m, &d) != 3) return iso;
+    struct tm t = {};
+    t.tm_year = y - 1900;
+    t.tm_mon = m - 1;
+    t.tm_mday = d;
+    t.tm_hour = 12;
+    t.tm_isdst = -1;
+    mktime(&t);
+    char buf[48];
+    snprintf(buf, sizeof(buf), "%s %d/%d", kDias[t.tm_wday], d, m);
+    return buf;
+}
+
 std::string IpActual() {
     esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
     if (netif == nullptr) return "";
@@ -147,7 +165,9 @@ void Madre::Start() {
     IniciarReloj();
     RegistrarHerramientas();
     RegistrarComprasTelegram();
+    RegistrarRecordatoriosTelegram();
     RegistrarResumenTelegram();
+    RegistrarEmergenciaTelegram();
     ultima_senal_ms_ = esp_timer_get_time() / 1000;
     // 12 KB: las noticias usan HTTPS (mbedtls) y necesitan bastante pila
     xTaskCreate(&Madre::TareaEntrada, "madre", 12288, this, 2, nullptr);
@@ -190,6 +210,8 @@ void Madre::Tarea() {
         }
 
         ActualizarPresencia(ahora);
+        ProcesarEmergencia(ahora);
+        AplicarEstados();
         RevisarBienestar(ahora);
         ActualizarNoticias(ahora);
         if (aviso_hora) {
@@ -629,10 +651,20 @@ bool Madre::PuedeHablar(int64_t ahora, bool es_saludo) {
     return true;
 }
 
+// Campana de notificaciones, incluida en el firmware (CMakeLists: madre/campana.ogg)
+extern "C" {
+extern const char campana_ogg_start[] asm("_binary_campana_ogg_start");
+extern const char campana_ogg_end[] asm("_binary_campana_ogg_end");
+}
+
+std::string_view Madre::SonidoCampana() {
+    return std::string_view(campana_ogg_start, campana_ogg_end - campana_ogg_start);
+}
+
 void Madre::Hablar(const char* frase) {
     auto& app = Application::GetInstance();
-    app.PlaySound(Lang::Sounds::OGG_POPUP);
-    vTaskDelay(pdMS_TO_TICKS(1500));
+    app.PlaySound(SonidoCampana());
+    vTaskDelay(pdMS_TO_TICKS(2300));      // que termine la campana (2,1 s)
     if (app.GetDeviceState() != kDeviceStateIdle) return;
     ESP_LOGI(TAG, "Activando al asistente: %s", frase);
     activacion_propia_ms_ = esp_timer_get_time() / 1000;
@@ -702,20 +734,32 @@ void Madre::RevisarAgenda(int64_t ahora) {
     char hhmm[32];
     snprintf(hhmm, sizeof(hhmm), "%02d:%02d", tm.tm_hour, tm.tm_min);
     int hoy = DiaPaginaHoy();
+    char hoy_iso[32];
+    snprintf(hoy_iso, sizeof(hoy_iso), "%04d-%02d-%02d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
     RevisarResumen(hhmm, minuto);
+    static bool limpiado = false;
+    if (!limpiado || strcmp(hhmm, "00:01") == 0) {      // borrar los de fechas que ya pasaron
+        limpiado = true;
+        LimpiarRecordatoriosViejos();
+    }
 
     std::vector<Aviso> nuevos;
     // Recordatorios de la página
     cJSON* raiz = cJSON_Parse(GetSeccion("recordatorios").c_str());
     const cJSON* r;
     cJSON_ArrayForEach(r, raiz) {
-        if (!Bool(r, "activo", true) || !TieneDia(r, hoy) || Str(r, "hora") != hhmm) continue;
+        if (!Bool(r, "activo", true) || Str(r, "hora") != hhmm) continue;
+        std::string fecha = Str(r, "fecha");          // "2026-11-28": una sola vez
+        if (fecha.empty() ? !TieneDia(r, hoy) : fecha != hoy_iso) continue;
         Aviso a;
         a.texto = Str(r, "texto");
         if (a.texto.empty()) continue;
         a.repetir = Bool(r, "repetir", false);
         a.avisar = Bool(r, "avisar", false);
         a.corto = a.texto;
+        a.rec_id = Str(r, "id");
+        std::string de = Str(r, "de");
+        if (Str(r, "origen") == "telegram" && !de.empty()) a.texto = de + " te manda a decir: " + a.texto;
         nuevos.push_back(a);
     }
     cJSON_Delete(raiz);
@@ -768,10 +812,15 @@ void Madre::ProcesarAvisos(int64_t ahora) {
         for (auto it = avisos_.begin(); it != avisos_.end();) {
             if (it->intentos >= 3 && ahora >= it->proximo_ms) {
                 para_diario.push_back("⚠️ " + it->hora + " " + it->corto + ": no confirmó (se lo dije 3 veces)");
+                MarcarEstado(it->rec_id, "no_confirmo");
+                for (auto& e : escuchados_) {
+                    if (e.creado_ms == it->creado_ms && e.texto == it->texto) e.estado = "no_confirmo";
+                }
                 if (it->avisar) para_telegram.push_back("⚠️ Mamá no confirmó este recordatorio (se lo dije 3 veces): " + it->texto);
                 it = avisos_.erase(it);
             } else if (it->intentos == 0 && ahora - it->creado_ms > 2 * 3600 * 1000) {
                 para_diario.push_back("⚠️ " + it->hora + " " + it->corto + ": no se lo pude decir");
+                MarcarEstado(it->rec_id, "no_dicho");
                 if (it->avisar) para_telegram.push_back("⚠️ No le pude decir a mamá este recordatorio (no estaba en la pieza o dormía): " + it->texto);
                 it = avisos_.erase(it);
             } else {
@@ -796,6 +845,26 @@ void Madre::ProcesarAvisos(int64_t ahora) {
             if (it->intentos < 3 && ahora >= it->proximo_ms) {
                 aviso_actual_.push_back(it->texto + (it->repetir ? " [pedir confirmación]" : ""));
                 it->intentos++;
+                MarcarEstado(it->rec_id, it->repetir ? "esperando" : "dicho");
+                {
+                    // Guardarlo para poder repetírselo ("no lo escuché")
+                    bool ya = false;
+                    for (auto& e : escuchados_) {
+                        if (e.creado_ms == it->creado_ms && e.texto == it->texto) {
+                            e.cuando = time(nullptr);
+                            ya = true;
+                        }
+                    }
+                    if (!ya) {
+                        Escuchado e;
+                        e.cuando = time(nullptr);
+                        e.creado_ms = it->creado_ms;
+                        e.texto = it->texto;
+                        e.pide_confirmar = it->repetir;
+                        escuchados_.push_back(e);
+                        if (escuchados_.size() > 10) escuchados_.erase(escuchados_.begin());
+                    }
+                }
                 if (!it->repetir) {
                     para_diario.push_back("🔔 " + it->hora + " " + it->corto + ": se lo dije");
                     it = avisos_.erase(it);       // se dice una sola vez
@@ -820,6 +889,10 @@ void Madre::ConfirmarAvisos(const char* como) {
             ESP_LOGI(TAG, "Recordatorio confirmado (%s): %s", como, it->texto.c_str());
             Anotar("✅ " + it->hora + " " + it->corto + ": confirmó " +
                    (strcmp(como, "botón") == 0 ? "con el botón" : "con la voz"));
+            MarcarEstado(it->rec_id, strcmp(como, "botón") == 0 ? "confirmo_boton" : "confirmo_voz");
+            for (auto& e : escuchados_) {
+                if (e.creado_ms == it->creado_ms && e.texto == it->texto) e.estado = "confirmo";
+            }
             it = avisos_.erase(it);
         } else {
             ++it;
@@ -1268,6 +1341,920 @@ void Madre::RegistrarComprasTelegram() {
 }
 
 // ----------------------------------------------------------------------------
+// Recordatorios desde Telegram
+//   /recordar 28/11 10:30 Turno con el traumatólogo
+//   /recordar mañana a las 9 Viene Gladys
+//   /recordar el viernes 18hs Llamar a la gringa
+//   /recordar todos los jueves 9:00 Viene Gladys a limpiar
+//   /recordatorios  -> lista con botones para borrar
+// ----------------------------------------------------------------------------
+namespace {
+
+struct PedidoRecordatorio {
+    std::string error;
+    bool semanal = false;
+    std::vector<int> dias;        // 0 = lunes ... 6 = domingo (como en la página)
+    struct tm fecha = {};         // si no es semanal
+    int hora = -1, minuto = 0;
+    std::string texto;
+};
+
+// "jueves" -> 3 (lunes = 0); -1 si no es un día
+int DiaDeLaSemana(const std::string& k) {
+    static const char* const kNombres[] = {"lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"};
+    for (int i = 0; i < 7; i++) {
+        if (k == kNombres[i]) return i;
+    }
+    return -1;
+}
+
+// "10", "10:30", "10.30", "10hs", "10:30hs", "9h" -> hora y minuto
+bool LeerHora(const std::string& k, int& h, int& m) {
+    std::string t = k;
+    for (const char* suf : {"hs", "hrs", "h"}) {
+        size_t n = strlen(suf);
+        if (t.size() > n && t.compare(t.size() - n, n, suf) == 0) {
+            t.erase(t.size() - n);
+            break;
+        }
+    }
+    int hh = -1, mm = 0;
+    char sep = 0;
+    int leidos = 0;
+    if (sscanf(t.c_str(), "%d%c%d%n", &hh, &sep, &mm, &leidos) == 3 && (sep == ':' || sep == '.') &&
+        leidos == (int)t.size()) {
+    } else if (sscanf(t.c_str(), "%d%n", &hh, &leidos) == 1 && leidos == (int)t.size()) {
+        mm = 0;
+    } else {
+        return false;
+    }
+    if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return false;
+    h = hh;
+    m = mm;
+    return true;
+}
+
+// "28/11", "28/11/26", "28-11-2026"
+bool LeerFecha(const std::string& k, int& d, int& m, int& y) {
+    int a = 0, b = 0, c = -1, leidos = 0;
+    char s1 = 0, s2 = 0;
+    if (sscanf(k.c_str(), "%d%c%d%c%d%n", &a, &s1, &b, &s2, &c, &leidos) == 5 && leidos == (int)k.size() &&
+        (s1 == '/' || s1 == '-') && s2 == s1) {
+    } else if (sscanf(k.c_str(), "%d%c%d%n", &a, &s1, &b, &leidos) == 3 && leidos == (int)k.size() &&
+               (s1 == '/' || s1 == '-')) {
+        c = -1;
+    } else {
+        return false;
+    }
+    if (a < 1 || a > 31 || b < 1 || b > 12) return false;
+    if (c >= 0 && c < 100) c += 2000;
+    d = a;
+    m = b;
+    y = c;
+    return true;
+}
+
+PedidoRecordatorio InterpretarRecordar(const std::string& pedido, time_t ahora) {
+    PedidoRecordatorio p;
+    struct tm hoy;
+    localtime_r(&ahora, &hoy);
+
+    // Palabras originales (para el texto) y normalizadas (para entender)
+    std::vector<std::string> orig, k;
+    {
+        std::string w;
+        for (size_t i = 0; i <= pedido.size(); i++) {
+            char c = i < pedido.size() ? pedido[i] : ' ';
+            if (c == ' ' || c == '\n' || c == '\t') {
+                if (!w.empty()) orig.push_back(w);
+                w.clear();
+            } else {
+                w += c;
+            }
+        }
+    }
+    for (auto& w : orig) {
+        std::string n = ClaveCompra(w);
+        while (!n.empty() && (n.back() == ',' || n.back() == ';' || (n.back() == '.' && n.size() > 1 &&
+                                                                       !isdigit((unsigned char)n[n.size() - 2]))))
+            n.pop_back();
+        k.push_back(n);
+    }
+
+    int dia_semana = -1;            // "el viernes"
+    int suma_dias = -1;             // hoy = 0, mañana = 1...
+    int fd = 0, fm = 0, fy = -1;    // fecha escrita
+    bool hay_fecha = false;
+    size_t i = 0;
+    auto es_fecha_u_hora = [&](size_t j) {
+        if (j >= k.size()) return false;
+        int a, b, c;
+        return LeerHora(k[j], a, b) || LeerFecha(k[j], a, b, c) || DiaDeLaSemana(k[j]) >= 0 || k[j] == "hoy" ||
+               k[j] == "manana" || k[j] == "pasado" || k[j] == "todos" || k[j] == "cada";
+    };
+    while (i < k.size()) {
+        const std::string& w = k[i];
+        int a, b, c;
+        // relleno: "el viernes", "a las 10", "para mañana", "para el lunes a las 9"
+        auto es_relleno = [](const std::string& x) {
+            return x == "el" || x == "a" || x == "las" || x == "la" || x == "para" || x == "alas" || x == "del";
+        };
+        if (es_relleno(w)) {
+            size_t j = i;
+            while (j < k.size() && es_relleno(k[j])) j++;
+            if (es_fecha_u_hora(j)) {
+                i = j;
+                continue;
+            }
+        }
+        if (!hay_fecha && w == "hoy") { suma_dias = 0; hay_fecha = true; i++; continue; }
+        if (!hay_fecha && w == "manana") { suma_dias = 1; hay_fecha = true; i++; continue; }
+        if (!hay_fecha && w == "pasado" && i + 1 < k.size() && k[i + 1] == "manana") {
+            suma_dias = 2; hay_fecha = true; i += 2; continue;
+        }
+        if (!hay_fecha && (w == "todos" || w == "cada")) {
+            size_t j = i + 1;
+            if (j < k.size() && (k[j] == "los" || k[j] == "las")) j++;
+            if (j < k.size() && (k[j] == "dias" || k[j] == "dia")) {
+                p.semanal = true;
+                for (int d = 0; d < 7; d++) p.dias.push_back(d);
+                hay_fecha = true;
+                i = j + 1;
+                continue;
+            }
+            std::vector<int> ds;
+            while (j < k.size()) {
+                int d = DiaDeLaSemana(k[j]);
+                if (d >= 0) { ds.push_back(d); j++; continue; }
+                if ((k[j] == "y" || k[j] == "e") && j + 1 < k.size() && DiaDeLaSemana(k[j + 1]) >= 0) { j++; continue; }
+                break;
+            }
+            if (!ds.empty()) {
+                p.semanal = true;
+                p.dias = ds;
+                hay_fecha = true;
+                i = j;
+                continue;
+            }
+        }
+        if (!hay_fecha && DiaDeLaSemana(w) >= 0) { dia_semana = DiaDeLaSemana(w); hay_fecha = true; i++; continue; }
+        if (!hay_fecha && LeerFecha(w, fd, fm, fy)) { hay_fecha = true; i++; continue; }
+        if (p.hora < 0 && LeerHora(w, a, b)) {
+            p.hora = a;
+            p.minuto = b;
+            i++;
+            if (i < k.size() && (k[i] == "hs" || k[i] == "horas" || k[i] == "hrs" || k[i] == "h")) i++;
+            continue;
+        }
+        (void)c;
+        break;   // de acá en adelante es el texto
+    }
+    for (size_t j = i; j < orig.size(); j++) p.texto += (p.texto.empty() ? "" : " ") + orig[j];
+    while (!p.texto.empty() && (p.texto[0] == '-' || p.texto[0] == ':' || p.texto[0] == ',')) {
+        p.texto.erase(0, 1);
+        while (!p.texto.empty() && p.texto[0] == ' ') p.texto.erase(0, 1);
+    }
+    if (ClaveCompra(p.texto).rfind("que ", 0) == 0) p.texto.erase(0, 4);
+
+    if (p.hora < 0) { p.error = "Me falta la hora."; return p; }
+    if (p.texto.empty()) { p.error = "Me falta qué le tiene que recordar."; return p; }
+    if (p.semanal) return p;
+
+    // Fecha concreta
+    struct tm f = hoy;
+    f.tm_hour = p.hora;
+    f.tm_min = p.minuto;
+    f.tm_sec = 0;
+    f.tm_isdst = -1;
+    if (fy != -1 || fd != 0) {
+        f.tm_mday = fd;
+        f.tm_mon = fm - 1;
+        f.tm_year = (fy > 0 ? fy : hoy.tm_year + 1900) - 1900;
+        time_t t = mktime(&f);
+        if (fy <= 0 && t < ahora - 24 * 3600) {      // "05/01" dicho en diciembre: el año que viene
+            f.tm_year++;
+            f.tm_isdst = -1;
+            t = mktime(&f);
+        }
+        if (f.tm_mday != fd) { p.error = "Esa fecha no existe."; return p; }
+    } else if (dia_semana >= 0) {
+        int hoy_pagina = (hoy.tm_wday + 6) % 7;
+        int dif = (dia_semana - hoy_pagina + 7) % 7;
+        f.tm_mday += dif;
+        time_t t = mktime(&f);
+        if (t <= ahora) {        // "el jueves" dicho un jueves después de esa hora: el que viene
+            f.tm_mday += 7;
+            f.tm_isdst = -1;
+            mktime(&f);
+        }
+    } else {
+        if (suma_dias > 0) f.tm_mday += suma_dias;
+        time_t t = mktime(&f);
+        if (suma_dias < 0 && t <= ahora) {           // sólo la hora: si ya pasó, mañana
+            f.tm_mday += 1;
+            f.tm_isdst = -1;
+            mktime(&f);
+        }
+    }
+    f.tm_isdst = -1;
+    if (mktime(&f) <= ahora) { p.error = "Esa fecha y hora ya pasaron."; return p; }
+    p.fecha = f;
+    return p;
+}
+
+const char* const kAyudaRecordar =
+    "Usalo así:\n"
+    "/recordar 28/11 10:30 Turno con el traumatólogo\n"
+    "/recordar mañana a las 9 Viene Gladys\n"
+    "/recordar el viernes 18hs Llamar a la gringa\n"
+    "/recordar todos los jueves 9:00 Viene Gladys a limpiar\n\n"
+    "XiaoZhi se lo dice a esa hora y lo repite hasta que toque el botón; si no confirma, te aviso.\n"
+    "Para ver o borrar: /recordatorios";
+
+const char* TextoEstado(const std::string& e) {
+    if (e == "dicho") return "🔔 Se lo dijo";
+    if (e == "esperando") return "🔔 Se lo dijo, esperando que confirme";
+    if (e == "confirmo_boton") return "✅ Confirmó con el botón";
+    if (e == "confirmo_voz") return "✅ Confirmó con la voz";
+    if (e == "no_confirmo") return "⚠️ No confirmó (se lo dijo 3 veces)";
+    if (e == "no_dicho") return "⚠️ No se lo pudo decir (no estaba o dormía)";
+    return "⏳ Pendiente";
+}
+}  // namespace
+
+bool Madre::GuardarRecordatorios(const std::string& json) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    recordatorios_ = json;
+    return Guardar("recordat", json);
+}
+
+std::string Madre::AgregarRecordatorioTelegram(const std::string& pedido, std::string& botones) {
+    if (!RelojEnHora()) return "Todavía no tengo la hora en el equipo. Probá en un ratito.";
+    if (pedido.empty()) return kAyudaRecordar;
+    time_t ahora = time(nullptr);
+    PedidoRecordatorio p = InterpretarRecordar(pedido, ahora);
+    if (!p.error.empty()) return "❓ " + p.error + "\n\n" + kAyudaRecordar;
+
+    char hora[16];
+    snprintf(hora, sizeof(hora), "%02d:%02d", p.hora, p.minuto);
+    static int contador = 0;
+    std::string id = "t" + std::to_string((long long)ahora) + "_" + std::to_string(++contador % 100);
+    cJSON* o = cJSON_CreateObject();
+    cJSON_AddStringToObject(o, "id", id.c_str());
+    cJSON_AddStringToObject(o, "texto", p.texto.c_str());
+    cJSON_AddStringToObject(o, "hora", hora);
+    std::string cuando;
+    if (p.semanal) {
+        cJSON* dias = cJSON_CreateArray();
+        for (int d : p.dias) cJSON_AddItemToArray(dias, cJSON_CreateNumber(d));
+        cJSON_AddItemToObject(o, "dias", dias);
+        cuando = (p.dias.size() >= 7) ? std::string("todos los días") : "todos los ";
+        if (p.dias.size() < 7) {
+            for (size_t j = 0; j < p.dias.size(); j++) {
+                cuando += (j == 0 ? "" : (j + 1 == p.dias.size() ? " y " : ", "));
+                cuando += kDiasPagina[p.dias[j]];
+                if (p.dias[j] >= 5) cuando += "s";      // sábados, domingos
+            }
+        }
+    } else {
+        char iso[32];
+        snprintf(iso, sizeof(iso), "%04d-%02d-%02d", p.fecha.tm_year + 1900, p.fecha.tm_mon + 1, p.fecha.tm_mday);
+        cJSON_AddStringToObject(o, "fecha", iso);
+        cuando = "el " + FechaLinda(iso);
+    }
+    cJSON_AddBoolToObject(o, "activo", true);
+    cJSON_AddBoolToObject(o, "repetir", true);
+    cJSON_AddBoolToObject(o, "avisar", true);
+    cJSON_AddStringToObject(o, "origen", "telegram");
+    std::string de = QuienMandaTelegram();
+    cJSON_AddStringToObject(o, "de", de.c_str());
+
+    cJSON* lista = cJSON_Parse(GetSeccion("recordatorios").c_str());
+    if (!cJSON_IsArray(lista)) {
+        cJSON_Delete(lista);
+        lista = cJSON_CreateArray();
+    }
+    if (cJSON_GetArraySize(lista) >= 50) {
+        cJSON_Delete(lista);
+        cJSON_Delete(o);
+        return "Ya hay 50 recordatorios cargados. Borrá alguno con /recordatorios.";
+    }
+    cJSON_AddItemToArray(lista, o);
+    char* txt = cJSON_PrintUnformatted(lista);
+    bool ok = txt && GuardarRecordatorios(txt);
+    if (txt) cJSON_free(txt);
+    cJSON_Delete(lista);
+    if (!ok) return "⚠️ No pude guardar el recordatorio.";
+
+    ESP_LOGI(TAG, "Recordatorio desde Telegram: %s %s %s", cuando.c_str(), hora, p.texto.c_str());
+
+    // Se lo cuenta enseguida ("Marcelo te agendó...") y queda anotado para esa hora
+    std::string para_ella = cuando;
+    if (!p.semanal) {
+        struct tm hoy;
+        localtime_r(&ahora, &hoy);
+        if (p.fecha.tm_year == hoy.tm_year && p.fecha.tm_yday == hoy.tm_yday) para_ella = "hoy";
+        else if (p.fecha.tm_year == hoy.tm_year && p.fecha.tm_yday == hoy.tm_yday + 1) para_ella = "mañana";
+    }
+    {
+        Aviso a;
+        a.texto = de + " te agendó un recordatorio para " + para_ella + " a las " + hora + ": " + p.texto +
+                  ". Decile que a esa hora se lo vas a recordar.";
+        a.corto = "aviso de recordatorio nuevo (" + p.texto + ")";
+        struct tm ya;
+        localtime_r(&ahora, &ya);
+        char hh[16];
+        snprintf(hh, sizeof(hh), "%02d:%02d", ya.tm_hour, ya.tm_min);
+        a.hora = hh;
+        a.creado_ms = esp_timer_get_time() / 1000;
+        a.proximo_ms = a.creado_ms;
+        std::lock_guard<std::mutex> lock(mutex_);
+        avisos_.push_back(a);
+    }
+    botones = "{\"inline_keyboard\":[[{\"text\":\"🗑 Borrar este recordatorio\",\"callback_data\":\"rec:del:" + id +
+              "\"}],[{\"text\":\"📋 Ver todos\",\"callback_data\":\"rec:ver\"}]]}";
+    return "✅ Agendado " + cuando + " a las " + hora + ":\n«" + p.texto + "»\n\n" +
+           "📢 Ya se lo cuento ahora (\"" + de + " te agendó un recordatorio…\").\n" +
+           "A esa hora se lo dice como \"" + de + " te manda a decir: " + p.texto + "\" y lo repite hasta que " +
+           "toque el botón (si no confirma, te aviso).";
+}
+
+std::string Madre::ListaRecordatoriosTelegram(std::string& botones) {
+    time_t ahora = time(nullptr);
+    struct tm hoy;
+    localtime_r(&ahora, &hoy);
+    char hoy_iso[32];
+    snprintf(hoy_iso, sizeof(hoy_iso), "%04d-%02d-%02d", hoy.tm_year + 1900, hoy.tm_mon + 1, hoy.tm_mday);
+
+    cJSON* lista = cJSON_Parse(GetSeccion("recordatorios").c_str());
+    if (!cJSON_IsArray(lista) || cJSON_GetArraySize(lista) == 0) {
+        cJSON_Delete(lista);
+        return "No hay recordatorios cargados.\n\nPara agregar uno: /recordar 28/11 10:30 Turno con el médico";
+    }
+    // Los que no tienen id (cargados desde la página) reciben uno, para poder borrarlos desde acá
+    bool cambio = false;
+    int n = 0;
+    cJSON* r;
+    cJSON_ArrayForEach(r, lista) {
+        if (Str(r, "id").empty()) {
+            std::string id = "p" + std::to_string((long long)ahora) + "_" + std::to_string(n);
+            cJSON_AddStringToObject(r, "id", id.c_str());
+            cambio = true;
+        }
+        n++;
+    }
+    if (cambio) {
+        char* txt = cJSON_PrintUnformatted(lista);
+        if (txt) {
+            GuardarRecordatorios(txt);
+            cJSON_free(txt);
+        }
+    }
+
+    // Primero los de fecha (por fecha), después los semanales (por hora)
+    struct Item { std::string orden, linea, id, boton; };
+    std::vector<Item> items;
+    cJSON_ArrayForEach(r, lista) {
+        std::string texto = Str(r, "texto"), hora = Str(r, "hora"), fecha = Str(r, "fecha"), id = Str(r, "id");
+        if (texto.empty()) continue;
+        bool de_telegram = Str(r, "origen") == "telegram";
+        if (!fecha.empty() && fecha < hoy_iso && !de_telegram) continue;
+        bool activo = Bool(r, "activo", true);
+        Item it;
+        it.id = id;
+        if (!fecha.empty()) {
+            it.orden = "0" + fecha + hora;
+            it.linea = "📅 " + FechaLinda(fecha) + ", " + hora + " — " + texto;
+            it.boton = FechaLinda(fecha).substr(FechaLinda(fecha).find(' ') + 1) + " " + hora;
+        } else {
+            it.orden = "1" + hora;
+            it.linea = "🔁 " + hora + " " + TextoDias(r) + " — " + texto;
+            it.boton = hora;
+        }
+        if (!activo) it.linea += " (apagado)";
+        if (de_telegram) {
+            std::string e = Str(r, "estado");
+            it.linea += "\n     " + std::string(TextoEstado(e));
+            if (!e.empty() && !Str(r, "estado_cuando").empty()) it.linea += " (" + Str(r, "estado_cuando") + ")";
+        }
+        std::string corto = texto;
+        if (texto.size() > 22) {
+            size_t c = 22;
+            while (c > 0 && ((unsigned char)texto[c] & 0xC0) == 0x80) c--;   // no cortar una letra con acento
+            corto = texto.substr(0, c) + "…";
+        }
+        it.boton = "🗑 " + it.boton + " " + corto;
+        items.push_back(it);
+    }
+    cJSON_Delete(lista);
+    std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) { return a.orden < b.orden; });
+
+    std::string s = "⏰ Recordatorios de mamá (" + std::to_string(items.size()) + "):\n";
+    cJSON* teclado = cJSON_CreateArray();
+    int con_boton = 0;
+    for (auto& it : items) {
+        s += "\n" + it.linea;
+        if (con_boton < 20 && !it.id.empty() && it.id.size() <= 40) {
+            cJSON* fila = cJSON_CreateArray();
+            cJSON* b = cJSON_CreateObject();
+            cJSON_AddStringToObject(b, "text", it.boton.c_str());
+            cJSON_AddStringToObject(b, "callback_data", ("rec:del:" + it.id).c_str());
+            cJSON_AddItemToArray(fila, b);
+            cJSON_AddItemToArray(teclado, fila);
+            con_boton++;
+        }
+    }
+    s += "\n\nTocá un botón para borrarlo. Para agregar: /recordar";
+    cJSON* markup = cJSON_CreateObject();
+    cJSON_AddItemToObject(markup, "inline_keyboard", teclado);
+    char* txt = cJSON_PrintUnformatted(markup);
+    if (txt) {
+        botones = txt;
+        cJSON_free(txt);
+    }
+    cJSON_Delete(markup);
+    return s;
+}
+
+std::string Madre::BorrarRecordatorio(const std::string& id) {
+    cJSON* lista = cJSON_Parse(GetSeccion("recordatorios").c_str());
+    std::string borrado;
+    int i = 0;
+    cJSON* r;
+    cJSON_ArrayForEach(r, lista) {
+        if (Str(r, "id") == id) {
+            borrado = Str(r, "texto");
+            std::string fecha = Str(r, "fecha");
+            borrado = Str(r, "hora") + " " + (fecha.empty() ? TextoDias(r) : FechaLinda(fecha)) + " — " + borrado;
+            cJSON_DeleteItemFromArray(lista, i);
+            break;
+        }
+        i++;
+    }
+    if (borrado.empty()) {
+        cJSON_Delete(lista);
+        return "Ese recordatorio ya no existe (puede que lo hayan borrado desde la página).";
+    }
+    char* txt = cJSON_PrintUnformatted(lista);
+    bool ok = txt && GuardarRecordatorios(txt);
+    if (txt) cJSON_free(txt);
+    cJSON_Delete(lista);
+    return ok ? "🗑 Borré: " + borrado : "⚠️ No pude borrarlo.";
+}
+
+void Madre::LimpiarRecordatoriosViejos() {
+    if (!RelojEnHora()) return;
+    time_t ahora = time(nullptr);
+    struct tm hoy;
+    localtime_r(&ahora, &hoy);
+    char hoy_iso[32];
+    snprintf(hoy_iso, sizeof(hoy_iso), "%04d-%02d-%02d", hoy.tm_year + 1900, hoy.tm_mon + 1, hoy.tm_mday);
+    // Los de Telegram quedan 7 días más, para ver en la página si los confirmó
+    time_t hace7 = ahora - 7 * 24 * 3600;
+    struct tm t7;
+    localtime_r(&hace7, &t7);
+    char hace7_iso[32];
+    snprintf(hace7_iso, sizeof(hace7_iso), "%04d-%02d-%02d", t7.tm_year + 1900, t7.tm_mon + 1, t7.tm_mday);
+    cJSON* lista = cJSON_Parse(GetSeccion("recordatorios").c_str());
+    bool cambio = false;
+    for (int i = cJSON_GetArraySize(lista) - 1; i >= 0; i--) {
+        const cJSON* r = cJSON_GetArrayItem(lista, i);
+        std::string fecha = Str(r, "fecha");
+        bool telegram = Str(r, "origen") == "telegram";
+        if (!fecha.empty() && fecha < (telegram ? std::string(hace7_iso) : std::string(hoy_iso))) {
+            ESP_LOGI(TAG, "Recordatorio vencido (%s), lo borro", fecha.c_str());
+            cJSON_DeleteItemFromArray(lista, i);
+            cambio = true;
+        }
+    }
+    if (cambio) {
+        char* txt = cJSON_PrintUnformatted(lista);
+        if (txt) {
+            GuardarRecordatorios(txt);
+            cJSON_free(txt);
+        }
+    }
+    cJSON_Delete(lista);
+}
+
+void Madre::MarcarEstado(const std::string& rec_id, const char* estado) {
+    if (rec_id.empty()) return;
+    std::lock_guard<std::mutex> lock(estados_mutex_);
+    if (estados_pendientes_.size() < 30) estados_pendientes_.push_back({rec_id, estado});
+}
+
+
+// Guarda en cada recordatorio qué pasó la última vez que sonó (lo muestra la página y /recordatorios)
+void Madre::AplicarEstados() {
+    std::vector<std::pair<std::string, std::string>> cambios;
+    {
+        std::lock_guard<std::mutex> lock(estados_mutex_);
+        if (estados_pendientes_.empty()) return;
+        cambios.swap(estados_pendientes_);
+    }
+    std::string cuando;
+    if (RelojEnHora()) {
+        time_t t = time(nullptr);
+        struct tm tm;
+        localtime_r(&t, &tm);
+        char buf[48];
+        snprintf(buf, sizeof(buf), "%s %d/%d %02d:%02d", kDiasCortos[tm.tm_wday], tm.tm_mday, tm.tm_mon + 1,
+                 tm.tm_hour, tm.tm_min);
+        cuando = buf;
+    }
+    cJSON* lista = cJSON_Parse(GetSeccion("recordatorios").c_str());
+    bool cambio = false;
+    std::vector<std::string> para_julio;
+    cJSON* r;
+    cJSON_ArrayForEach(r, lista) {
+        std::string id = Str(r, "id");
+        for (auto& c : cambios) {
+            if (c.first != id) continue;
+            cJSON_DeleteItemFromObject(r, "estado");
+            cJSON_DeleteItemFromObject(r, "estado_cuando");
+            cJSON_AddStringToObject(r, "estado", c.second.c_str());
+            cJSON_AddStringToObject(r, "estado_cuando", cuando.c_str());
+            cambio = true;
+            // Los que mandó Julio por Telegram: avisarle cuando ella confirma
+            if (Str(r, "origen") == "telegram" && c.second.rfind("confirmo", 0) == 0) {
+                para_julio.push_back("✅ Mamá confirmó tu recordatorio «" + Str(r, "texto") + "» (" + cuando + ", " +
+                                     (c.second == "confirmo_boton" ? "con el botón" : "con la voz") + ").");
+            }
+        }
+    }
+    if (cambio) {
+        char* txt = cJSON_PrintUnformatted(lista);
+        if (txt) {
+            GuardarRecordatorios(txt);
+            cJSON_free(txt);
+        }
+    }
+    cJSON_Delete(lista);
+    for (auto& m : para_julio) TelegramBot::GetInstance().QueueMessage(m);
+}
+
+// Cómo llama mamá a quien manda por Telegram (el administrador): "Julio" -> "Marcelo"
+std::string Madre::QuienMandaTelegram() {
+    std::string nombre = TelegramBot::GetInstance().AdminName();
+    if (nombre.empty()) {
+        // No figura en la lista de familiares: buscar al hijo en la pestaña Familia
+        cJSON* raiz = cJSON_Parse(GetSeccion("familia").c_str());
+        const cJSON* p;
+        cJSON_ArrayForEach(p, raiz) {
+            if (ClaveCompra(Str(p, "parentesco")) == "hijo") {
+                nombre = Str(p, "nombre");
+                break;
+            }
+        }
+        cJSON_Delete(raiz);
+    }
+    if (nombre.empty()) return "Tu hijo";
+    return ComoLoLlamaMama(nombre);
+}
+
+// "¿Tengo algún aviso?", "no lo escuché, repetímelo"
+std::string Madre::TextoAvisosRecientes() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    time_t ahora = time(nullptr);
+    std::string s;
+    for (auto& a : avisos_) {
+        if (a.intentos == 0) s += "- Todavía no se lo dijiste: " + a.texto + "\n";
+    }
+    for (auto it = escuchados_.rbegin(); it != escuchados_.rend(); ++it) {
+        if (ahora - it->cuando > 12 * 3600) continue;
+        struct tm tm;
+        localtime_r(&it->cuando, &tm);
+        char hh[16];
+        snprintf(hh, sizeof(hh), "%02d:%02d", tm.tm_hour, tm.tm_min);
+        s += std::string("- A las ") + hh + ": " + it->texto;
+        if (it->estado == "confirmo") s += " (ya lo confirmó)";
+        else if (it->estado == "no_confirmo") s += " (no lo confirmó a tiempo)";
+        else if (it->pide_confirmar) s += " [todavía falta que lo confirme]";
+        s += "\n";
+    }
+    if (s.empty()) return "No hay avisos de las últimas horas: no tiene nada pendiente.";
+    return "Avisos de las últimas horas (el más reciente primero):\n" + s;
+}
+
+void Madre::RegistrarRecordatoriosTelegram() {
+    auto& tg = TelegramBot::GetInstance();
+    tg.AddAdminCommand(
+        [this](const std::string& cmd, const std::string& arg, std::string& texto, std::string& b) {
+            if (cmd == "/recordar") {
+                texto = AgregarRecordatorioTelegram(arg, b);
+                return true;
+            }
+            if (cmd == "/recordatorios") {
+                texto = ListaRecordatoriosTelegram(b);
+                return true;
+            }
+            return false;
+        },
+        "/recordar 28/11 10:30 Turno con el médico - agendarle un recordatorio a mamá\n"
+        "/recordatorios - ver y borrar los recordatorios");
+    tg.AddCallbackHandler([this](const std::string& data, std::string& texto, std::string& b) {
+        if (data.rfind("rec:del:", 0) == 0) {
+            texto = BorrarRecordatorio(data.substr(8));
+            return true;
+        }
+        if (data == "rec:ver") {
+            texto = ListaRecordatoriosTelegram(b);
+            return true;
+        }
+        return false;
+    });
+}
+
+// ----------------------------------------------------------------------------
+// Emergencia: "Sofía, necesito ayuda" / botón apretado 5 segundos
+// ----------------------------------------------------------------------------
+namespace {
+
+std::vector<std::string> PalabrasClave(const std::string& texto, bool partir_espacios);  // más abajo
+
+// "21:05" (o vacío si el reloj no está en hora)
+std::string HoraCorta() {
+    time_t t = time(nullptr);
+    struct tm tm;
+    localtime_r(&t, &tm);
+    if (tm.tm_year + 1900 < 2025) return "";
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%02d:%02d", tm.tm_hour, tm.tm_min);
+    return buf;
+}
+
+std::string HoraAhora() {
+    time_t t = time(nullptr);
+    struct tm tm;
+    localtime_r(&t, &tm);
+    if (tm.tm_year + 1900 < 2025) return "";
+    char buf[48];
+    snprintf(buf, sizeof(buf), "%s %d/%d a las %02d:%02d", kDias[tm.tm_wday], tm.tm_mday, tm.tm_mon + 1,
+             tm.tm_hour, tm.tm_min);
+    return buf;
+}
+
+// Minúsculas, sin acentos ni signos: "¡Sofía, me caí!" -> "sofia me cai"
+std::string FraseNormalizada(const std::string& texto) {
+    std::string t = ClaveCompra(texto);
+    std::string r = " ";
+    for (char c : t) {
+        bool letra = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+        if (letra) {
+            r += c;
+        } else if (r.back() != ' ') {
+            r += ' ';
+        }
+    }
+    if (r.back() != ' ') r += ' ';
+    return r;   // con espacios al principio y al final, para buscar palabras enteras
+}
+
+}  // namespace
+
+bool Madre::PedirAyuda(const std::string& dijo, const char* origen) {
+    int64_t ahora = esp_timer_get_time() / 1000;
+    Emergencia e;
+    {
+        std::lock_guard<std::mutex> lock(emerg_mutex_);
+        if (emerg_.activa && ahora - emerg_.inicio_ms < 10 * 60 * 1000) {
+            // Ya hay un pedido en marcha: se suma lo que dijo, sin volver a mandar
+            if (!dijo.empty() && emerg_.dijo.find(dijo) == std::string::npos && emerg_.dijo.size() < 300) {
+                emerg_.dijo += emerg_.dijo.empty() ? dijo : " / " + dijo;
+            }
+            if (strcmp(origen, "botón") == 0) emerg_hablar_ = true;
+            ESP_LOGW(TAG, "Emergencia: ya estaba avisada (%s)", origen);
+            return false;
+        }
+        int id = emerg_.id + 1;
+        emerg_ = Emergencia();
+        emerg_.id = id;
+        emerg_.activa = true;
+        emerg_.envios = 1;
+        emerg_.inicio_ms = ahora;
+        emerg_.ultimo_envio_ms = ahora;
+        emerg_.dijo = dijo;
+        emerg_.origen = origen;
+        emerg_.hora = HoraAhora();
+        e = emerg_;
+    }
+    ESP_LOGW(TAG, "EMERGENCIA (%s): %s", origen, dijo.c_str());
+    std::string botones = "{\"inline_keyboard\":[[{\"text\":\"🏃 Voy yo\",\"callback_data\":\"emerg:voy:" +
+                          std::to_string(e.id) + "\"}]]}";
+    EnviarATodos(TextoEmergencia(e, false), botones);
+    Anotar("🚨 " + HoraCorta() + " pidió ayuda" +
+           (e.dijo.empty() ? std::string(" con el botón") : ": \"" + e.dijo + "\""));
+    if (strcmp(origen, "botón") == 0) emerg_hablar_ = true;   // que XiaoZhi la tranquilice
+    return true;
+}
+
+void Madre::EnviarATodos(const std::string& texto, const std::string& botones, const std::string& salvo) {
+    auto& tg = TelegramBot::GetInstance();
+    bool prueba;
+    {
+        std::lock_guard<std::mutex> lock(emerg_mutex_);
+        prueba = esp_timer_get_time() / 1000 < emerg_prueba_hasta_ms_;
+    }
+    if (prueba) {
+        tg.QueueUrgent("🧪 PRUEBA (sólo te llega a vos)\n\n" + texto, "", botones);
+        return;
+    }
+    for (auto& c : tg.GetContacts()) {
+        if (c.first != salvo) tg.QueueUrgent(texto, c.first, botones);
+    }
+}
+
+std::string Madre::TextoEmergencia(const Emergencia& e, bool repeticion) {
+    std::string apodo;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        apodo = aj_.mama_apodo.empty() ? "Mamá" : aj_.mama_apodo;
+    }
+    std::string s;
+    if (repeticion) {
+        s = "🚨 TODAVÍA NADIE RESPONDIÓ\n" + apodo + " pidió ayuda" +
+            (e.hora.empty() ? std::string("") : " el " + e.hora) + " (aviso " + std::to_string(e.envios) + " de 4).";
+    } else {
+        s = "🚨 ¡" + apodo + " necesita ayuda!";
+        if (!e.hora.empty()) s += "\n" + e.hora;
+    }
+    if (e.origen == "botón" && e.dijo.empty()) {
+        s += "\nMantuvo apretado el botón de ayuda.";
+    } else if (!e.dijo.empty()) {
+        s += "\nDijo: \"" + e.dijo + "\"";
+    }
+    s += "\n\nSi podés ir o llamarla, tocá el botón así los demás saben que alguien va.";
+    return s;
+}
+
+// Cómo llama mamá a quien tocó "Voy yo" (contacto "Julio" -> "Marcelo", según la pestaña Familia)
+std::string Madre::ComoLoLlamaMama(const std::string& nombre_telegram) {
+    std::string primero = ClaveCompra(nombre_telegram.substr(0, nombre_telegram.find(' ')));
+    if (primero.empty()) return nombre_telegram;
+    std::string familia = GetSeccion("familia");
+    std::string resultado = nombre_telegram;
+    cJSON* raiz = cJSON_Parse(familia.c_str());
+    const cJSON* p;
+    cJSON_ArrayForEach(p, raiz) {
+        std::string nombre = Str(p, "nombre");
+        bool es = false;
+        for (auto& w : PalabrasClave(nombre, true)) es = es || w == primero;
+        for (auto& w : PalabrasClave(Str(p, "apodo"), false)) es = es || w == primero;
+        if (!es) continue;
+        std::string apodo = Str(p, "apodo");
+        apodo = apodo.substr(0, apodo.find(','));
+        apodo = Recortar(apodo);
+        resultado = apodo.empty() ? nombre.substr(0, nombre.find(' ')) : apodo;
+        break;
+    }
+    cJSON_Delete(raiz);
+    return resultado;
+}
+
+bool Madre::AtenderEmergencia(const std::string& data, const std::string& chat_id, const std::string& nombre,
+                              std::string& respuesta) {
+    const std::string prefijo = "emerg:voy:";
+    if (data.rfind(prefijo, 0) != 0) return false;
+    int id = atoi(data.c_str() + prefijo.size());
+    int64_t ahora = esp_timer_get_time() / 1000;
+    std::string hora;
+    {
+        std::lock_guard<std::mutex> lock(emerg_mutex_);
+        if (id != emerg_.id) {
+            respuesta = "Ese aviso ya terminó. ¡Gracias igual!";
+            return true;
+        }
+        if (emerg_.atendida_ms != 0) {
+            respuesta = "Gracias, " + nombre + ". Ya va " + emerg_.quien + ".";
+            return true;
+        }
+        emerg_.atendida_ms = ahora;
+        emerg_.activa = false;
+        emerg_.quien = nombre;
+        hora = emerg_.hora;
+    }
+    std::string apodo;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        apodo = aj_.mama_apodo.empty() ? "mamá" : aj_.mama_apodo;
+    }
+    ESP_LOGW(TAG, "Emergencia atendida por %s", nombre.c_str());
+    respuesta = "Gracias, " + nombre + ". Le aviso a " + apodo + " que vas en camino.";
+    EnviarATodos("✅ " + nombre + " va en camino a ayudar a " + apodo +
+                     (hora.empty() ? std::string(".") : " (pidió ayuda el " + hora + ")."),
+                 "", chat_id);
+    Anotar("✅ " + HoraCorta() + " " + nombre + " respondió que iba a ayudarla");
+
+    // Que XiaoZhi se lo diga a ella
+    std::string quien = ComoLoLlamaMama(nombre);
+    Aviso a;
+    a.texto = quien + " ya está en camino para ayudarte. Quedate tranquila, " + apodo + ".";
+    a.corto = "aviso de que " + quien + " va en camino";
+    a.hora = HoraCorta();
+    a.creado_ms = ahora;
+    a.proximo_ms = ahora;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        avisos_.push_back(a);
+    }
+    return true;
+}
+
+std::string Madre::EstadoEmergencia() {
+    std::lock_guard<std::mutex> lock(emerg_mutex_);
+    if (emerg_.atendida_ms != 0 && esp_timer_get_time() / 1000 - emerg_.atendida_ms < 60 * 60 * 1000) {
+        return emerg_.quien + " ya respondió que va en camino.";
+    }
+    if (emerg_.activa) return "Ya se avisó a toda la familia; todavía nadie respondió.";
+    return "";
+}
+
+void Madre::RevisarFraseDeMama(const std::string& texto) {
+    static const char* const kPedidos[] = {
+        " necesito ayuda ", " necesito auxilio ", " auxilio ", " socorro ", " me cai ", " me caigo ",
+        " me siento mal ", " me siento muy mal ", " no me siento bien ", " me descompuse ",
+        " no puedo respirar ", " me duele el pecho ", " llama a una ambulancia ", " una ambulancia ",
+        " llamen a alguien ", " ayudenme ", " pedi ayuda ", " pidan ayuda ", " me estoy muriendo ",
+    };
+    std::string f = FraseNormalizada(texto);
+    bool pide = false;
+    for (auto k : kPedidos) {
+        if (f.find(k) != std::string::npos) {
+            pide = true;
+            break;
+        }
+    }
+    // "Ayuda", "Sofía, ayuda", "¡ayuda, ayuda!" (frase corta con "ayuda")
+    if (!pide && f.find(" ayuda ") != std::string::npos) {
+        int palabras = 0;
+        for (size_t i = 1; i < f.size(); i++) palabras += f[i] == ' ';
+        pide = palabras <= 4;
+    }
+    if (pide) PedirAyuda(Recortar(texto), "frase");
+}
+
+void Madre::ProcesarEmergencia(int64_t ahora) {
+    // Botón: que XiaoZhi le hable para tranquilizarla
+    if (emerg_hablar_ && Application::GetInstance().GetDeviceState() == kDeviceStateIdle &&
+        !TelegramBot::GetInstance().IsVoiceBusy()) {
+        emerg_hablar_ = false;
+        Hablar("Necesito ayuda");
+    }
+
+    Emergencia e;
+    bool repetir = false, vencida = false;
+    {
+        std::lock_guard<std::mutex> lock(emerg_mutex_);
+        if (!emerg_.activa) return;
+        if (emerg_.envios < 4 && ahora - emerg_.ultimo_envio_ms >= 5 * 60 * 1000) {
+            emerg_.envios++;
+            emerg_.ultimo_envio_ms = ahora;
+            repetir = true;
+        } else if (emerg_.envios >= 4 && ahora - emerg_.ultimo_envio_ms >= 10 * 60 * 1000) {
+            emerg_.activa = false;   // 30 minutos sin respuesta: se deja de insistir
+            vencida = true;
+        }
+        e = emerg_;
+    }
+    if (repetir) {
+        ESP_LOGW(TAG, "Emergencia: nadie respondió, aviso %d", e.envios);
+        std::string botones = "{\"inline_keyboard\":[[{\"text\":\"🏃 Voy yo\",\"callback_data\":\"emerg:voy:" +
+                              std::to_string(e.id) + "\"}]]}";
+        EnviarATodos(TextoEmergencia(e, true), botones);
+    }
+    if (vencida) {
+        TelegramBot::GetInstance().QueueUrgent("⚠️ Nadie respondió al pedido de ayuda" +
+                                               (e.hora.empty() ? std::string("") : " del " + e.hora) +
+                                               ". Dejé de insistir. Por favor, llamala.");
+        Anotar("⚠️ " + HoraCorta() + " nadie respondió al pedido de ayuda");
+    }
+}
+
+void Madre::RegistrarEmergenciaTelegram() {
+    auto& tg = TelegramBot::GetInstance();
+    tg.AddFamilyCallbackHandler(
+        [this](const std::string& data, const std::string& chat_id, const std::string& nombre,
+               std::string& respuesta) { return AtenderEmergencia(data, chat_id, nombre, respuesta); });
+    tg.AddAdminCommand(
+        [this](const std::string& cmd, const std::string& arg, std::string& texto, std::string&) {
+            if (cmd != "/prueba_ayuda") return false;
+            std::lock_guard<std::mutex> lock(emerg_mutex_);
+            if (arg == "no") {
+                emerg_prueba_hasta_ms_ = 0;
+                texto = "Modo prueba apagado: los pedidos de ayuda les llegan a todos.";
+            } else {
+                emerg_prueba_hasta_ms_ = esp_timer_get_time() / 1000 + 60 * 60 * 1000;
+                emerg_.activa = false;
+                texto = "🧪 Modo prueba por 1 hora: los pedidos de ayuda te llegan sólo a vos.\n"
+                        "Probá decir \"Sofía, necesito ayuda\" o mantener el botón 5 segundos.\n"
+                        "Para terminar antes: /prueba_ayuda no";
+            }
+            return true;
+        },
+        "/prueba_ayuda - probar la emergencia sin avisarle a toda la familia (1 hora)");
+}
+
+// ----------------------------------------------------------------------------
 // Resumen diario (llega por Telegram a la hora elegida; también con /resumen)
 // ----------------------------------------------------------------------------
 namespace {
@@ -1543,15 +2530,22 @@ std::string Madre::TextoPastillero(bool solo_hoy) {
 std::string Madre::TextoRecordatorios(bool solo_hoy) {
     cJSON* raiz = cJSON_Parse(GetSeccion("recordatorios").c_str());
     int hoy = DiaPaginaHoy();
+    time_t ahora_t = time(nullptr);
+    struct tm tm_hoy;
+    localtime_r(&ahora_t, &tm_hoy);
+    char hoy_iso[32];
+    snprintf(hoy_iso, sizeof(hoy_iso), "%04d-%02d-%02d", tm_hoy.tm_year + 1900, tm_hoy.tm_mon + 1, tm_hoy.tm_mday);
     std::string s;
     const cJSON* r;
     cJSON_ArrayForEach(r, raiz) {
         if (!Bool(r, "activo", true)) continue;
-        if (solo_hoy && !TieneDia(r, hoy)) continue;
+        std::string fecha = Str(r, "fecha");
+        if (solo_hoy && (fecha.empty() ? !TieneDia(r, hoy) : fecha != hoy_iso)) continue;
+        if (!fecha.empty() && fecha < hoy_iso) continue;
         std::string texto = Str(r, "texto"), hora = Str(r, "hora");
         if (texto.empty()) continue;
         s += "- " + hora + ": " + texto;
-        if (!solo_hoy) s += " (" + TextoDias(r) + ")";
+        if (!solo_hoy) s += " (" + (fecha.empty() ? TextoDias(r) : "una sola vez, el " + FechaLinda(fecha)) + ")";
         s += "\n";
     }
     cJSON_Delete(raiz);
@@ -1622,6 +2616,18 @@ void Madre::RegistrarHerramientas() {
             return s;
         });
 
+    mcp.AddTool("self.madre.get_recent_notices",
+        "Call it when the user asks whether she has a pending notice, says she did not hear or did not "
+        "understand the last notice, or asks to repeat it ('¿tengo algún aviso?', '¿tengo algo pendiente?', "
+        "'¿qué me dijiste recién?', 'no escuché el aviso', 'no llegué a escucharlo', 'repetímelo', "
+        "'sonó la campana, ¿qué era?'). It returns the notices of the last hours, newest first. Tell her "
+        "again, slowly and clearly, the most recent one (or the ones she missed), addressing her by her "
+        "name. If one says '[todavía falta que lo confirme]', ask her to touch the button or say 'listo' "
+        "when she has done it (do not read the brackets). For messages that family sent by Telegram use "
+        "the Telegram tools instead.",
+        PropertyList(),
+        [this](const PropertyList&) -> ReturnValue { return TextoAvisosRecientes(); });
+
     mcp.AddTool("self.madre.confirm_notice",
         "Call it when, after a reminder, the user says she already did it or understood ('listo', "
         "'ya está', 'ya lo tomé', 'ya los tomé', 'entendido', 'ya lo hice'). It stops the reminder from "
@@ -1676,6 +2682,35 @@ void Madre::RegistrarHerramientas() {
         [this](const PropertyList&) -> ReturnValue {
             TelegramBot::GetInstance().QueueMessage(TextoCompras(true));
             return std::string("Listo, la lista le va a llegar a Julio por Telegram.");
+        });
+
+    mcp.AddTool("self.madre.emergency",
+        "EMERGENCY: alert the whole family by Telegram that she needs help. Call it IMMEDIATELY, without "
+        "asking anything first, whenever she says she needs help, feels ill or very bad, fell, is hurt, "
+        "has chest pain, can't breathe, or asks to call someone urgently or an ambulance "
+        "('Sofía, necesito ayuda', 'me caí', 'me siento mal', 'auxilio', 'llamá a alguien'). "
+        "Do NOT use it for ordinary help ('ayudame a recordar algo', 'ayudame con la lista'). "
+        "'said' = her words, in Spanish. Then follow the instructions it returns: stay calm and "
+        "reassuring, speak slowly, in short sentences.",
+        PropertyList({Property("said", kPropertyTypeString)}),
+        [this](const PropertyList& props) -> ReturnValue {
+            std::string dijo = props["said"].value<std::string>();
+            bool nuevo = PedirAyuda(dijo, "voz");
+            std::string estado = EstadoEmergencia();
+            size_t n = TelegramBot::GetInstance().GetContacts().size();
+            std::string r = nuevo ? "Ya avisé a toda la familia por Telegram (" + std::to_string(n) +
+                                        (n == 1 ? " persona). " : " personas). ")
+                                  : "La familia ya estaba avisada. " + estado + " ";
+            r += "Decile con calma, en frases cortas: que ya les avisaste a todos, que enseguida alguien la "
+                 "va a llamar o a venir, que se quede tranquila y, si puede, sentada o acostada sin moverse "
+                 "mucho. Preguntale cómo se siente y si está lastimada. Si dice que le duele el pecho, que no "
+                 "puede respirar o que perdió fuerza en un brazo o la cara, decile que es importante llamar "
+                 "al 107 (emergencias). No cortes la charla: acompañala. MUY IMPORTANTE: NUNCA le digas "
+                 "que alguien ya viene, que está en camino o que va a llegar, ni nombres a nadie como si "
+                 "viniera, hasta que el equipo te pase un aviso diciendo quién va en camino (eso llega "
+                 "solo cuando un familiar lo confirma). Mientras tanto decí sólo que la familia ya está "
+                 "avisada y que enseguida alguien la va a llamar o a venir.";
+            return r;
         });
 
     mcp.AddTool("self.madre.get_config_address",

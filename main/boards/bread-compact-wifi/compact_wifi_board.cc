@@ -137,12 +137,20 @@ private:
             }
             app.ToggleChatState();
         });
+
+#if CONFIG_MADRE_ENABLE
+        // Mantener el TTP223 apretado 5 segundos = pedir ayuda (avisa a toda la familia)
+        touch_button_.OnLongPress([]() {
+            ESP_LOGW(TAG, "TTP223: botón mantenido 5 s -> pedido de ayuda");
+            Madre::GetInstance().PedirAyuda("", "botón");
+        });
+#endif
     }
 
 public:
     CompactWifiBoard() :
         boot_button_(BOOT_BUTTON_GPIO),
-        touch_button_(TOUCH_BUTTON_GPIO, true) {
+        touch_button_(TOUCH_BUTTON_GPIO, true, 5000) {
         InitializeDisplayI2c();
         InitializeSsd1306Display();
         InitializeButtons();

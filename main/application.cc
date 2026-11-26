@@ -11,6 +11,9 @@
 #include "system_info.h"
 #include "text_glyph_payload.h"
 #include "websocket_protocol.h"
+#if CONFIG_MADRE_ENABLE
+#include "madre.h"
+#endif
 
 #include <driver/gpio.h>
 #include <esp_log.h>
@@ -661,6 +664,11 @@ void Application::InitializeProtocol() {
                     glyphs.clear();
                 }
                 ESP_LOGI(TAG, ">> %s", text->valuestring);
+#if CONFIG_MADRE_ENABLE
+                // Emergencia: si pide ayuda ("Sofía, necesito ayuda", "me caí"), avisar a la familia
+                // aunque la IA no responda
+                Madre::GetInstance().RevisarFraseDeMama(text->valuestring);
+#endif
                 Schedule([display, message = std::string(text->valuestring),
                           glyphs = std::move(glyphs), bpp]() {
                     display->AddTextGlyphs(glyphs, bpp);
@@ -1128,7 +1136,11 @@ void Application::StartNotification(std::string audio_url, std::vector<NotifySub
     if (playback_id == 0) {
         playback_id = ++notification_playback_id_;
     }
+#if CONFIG_MADRE_ENABLE
+    audio_service_.PlaySound(Madre::SonidoCampana());   // campana de notificación
+#else
     audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);
+#endif
 
     bool started = notify_player_.Start(
         std::move(audio_url), std::move(subtitles), playback_id,

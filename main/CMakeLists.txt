@@ -1474,5 +1474,7 @@ endif()
 # >>> madre pagina
 if(CONFIG_MADRE_ENABLE)
     target_add_binary_data(${COMPONENT_LIB} "${CMAKE_CURRENT_SOURCE_DIR}/madre/config.html" TEXT)
+    # Campana de las notificaciones (recortada y más fuerte, Ogg Opus 16 kHz mono)
+    target_add_binary_data(${COMPONENT_LIB} "${CMAKE_CURRENT_SOURCE_DIR}/madre/campana.ogg" BINARY)
 endif()
 # <<< madre pagina

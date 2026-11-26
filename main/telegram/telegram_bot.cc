@@ -29,6 +29,9 @@
 #include "mcp_server.h"
 #include "settings.h"
 #include "assets/lang_config.h"
+#if CONFIG_MADRE_ENABLE
+#include "madre.h"   // campana de notificación
+#endif
 
 #define TAG "Telegram"
 
@@ -142,8 +145,13 @@ std::string JsonIdToString(cJSON* item) {
 
 void ShowAlert(const std::string& text, bool with_sound) {
     Application::GetInstance().Schedule([text, with_sound]() {
+#if CONFIG_MADRE_ENABLE
+        std::string_view tono = Madre::SonidoCampana();   // campana de notificación
+#else
+        std::string_view tono = Lang::Sounds::OGG_POPUP;
+#endif
         Application::GetInstance().Alert("Telegram", text.c_str(), "neutral",
-                                         with_sound ? Lang::Sounds::OGG_POPUP : std::string_view());
+                                         with_sound ? tono : std::string_view());
     });
 }
 
@@ -436,6 +444,9 @@ void TelegramBot::PollLoop() {
 
         auto state = app.GetDeviceState();
 
+        // Emergencias: primero que nada y en cualquier estado
+        FlushUrgent();
+
         // Mensajes pendientes de enviar. Se mandan con el equipo en reposo o
         // escuchando, nunca mientras habla (la conexión cortaría su voz).
         if (state == kDeviceStateIdle || state == kDeviceStateListening) {
@@ -469,6 +480,54 @@ void TelegramBot::QueueMessage(const std::string& text, const std::string& chat_
         outbox_.pop_front();  // no acumular sin límite si no hay conexión
     }
     outbox_.push_back({chat_id.empty() ? default_chat_id_ : chat_id, text});
+}
+
+void TelegramBot::QueueUrgent(const std::string& text, const std::string& chat_id,
+                              const std::string& reply_markup_json) {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    if (urgent_.size() >= 40) urgent_.pop_front();
+    urgent_.push_back({chat_id.empty() ? default_chat_id_ : chat_id, text, reply_markup_json, 0});
+}
+
+std::vector<std::pair<std::string, std::string>> TelegramBot::GetContacts() {
+    std::vector<std::pair<std::string, std::string>> r;
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    for (auto& c : contacts_) r.push_back({c.chat_id, c.name});
+    if (!default_chat_id_.empty()) {
+        bool esta = false;
+        for (auto& c : r) esta = esta || c.first == default_chat_id_;
+        if (!esta) r.insert(r.begin(), {default_chat_id_, ""});
+    }
+    return r;
+}
+
+void TelegramBot::AddFamilyCallbackHandler(BotonFamilia f) {
+    botones_familia_.push_back(std::move(f));
+}
+
+// Mensajes urgentes: se mandan en cualquier estado (aunque corte la voz un instante).
+// Si uno falla, se reintenta cada ~2 segundos (hasta 30 veces, más o menos un minuto).
+void TelegramBot::FlushUrgent() {
+    while (true) {
+        Urgente u;
+        {
+            std::lock_guard<std::mutex> lock(data_mutex_);
+            if (urgent_.empty()) return;
+            u = urgent_.front();
+            urgent_.pop_front();
+        }
+        bool ok = !u.chat_id.empty() && SendMessage(u.text, u.chat_id, u.markup);
+        if (!ok) {
+            ESP_LOGE(TAG, "Urgente: no se pudo enviar a %s (intento %d)", u.chat_id.c_str(), u.intentos + 1);
+            if (++u.intentos < 30 && !u.chat_id.empty()) {
+                std::lock_guard<std::mutex> lock(data_mutex_);
+                urgent_.push_back(u);
+            }
+            vTaskDelay(pdMS_TO_TICKS(2000));   // sin conexión: esperar y probar de nuevo
+            return;
+        }
+        ESP_LOGW(TAG, "Urgente enviado a %s", u.chat_id.c_str());
+    }
 }
 
 void TelegramBot::FlushOutbox() {
@@ -816,7 +875,11 @@ void TelegramBot::ProcessPendingVoice() {
     }
 
     // Dejar que se escuche el sonido de aviso antes de abrir la conversación
+#if CONFIG_MADRE_ENABLE
+    vTaskDelay(pdMS_TO_TICKS(2300));   // la campana dura 2,1 s
+#else
     vTaskDelay(pdMS_TO_TICKS(1500));
+#endif
     if (app.GetDeviceState() != kDeviceStateIdle) {
         std::lock_guard<std::mutex> lock(data_mutex_);
         announce_pending_ = true;  // reintentar más tarde
@@ -1137,7 +1200,26 @@ void TelegramBot::HandleCallbackQuery(cJSON* callback) {
         std::string resp;
         ApiCall("answerCallbackQuery", std::string("{\"callback_query_id\":\"") + id->valuestring + "\"}", resp);
     }
-    if (from_id != default_chat_id_ || !cJSON_IsString(data)) return;  // sólo el administrador
+    if (!cJSON_IsString(data)) return;
+
+    // Botones que puede tocar cualquier familiar (por ejemplo "Voy yo" de una emergencia)
+    if (!botones_familia_.empty() && (from_id == default_chat_id_ || IsContact(from_id))) {
+        std::string nombre = ContactName(from_id);
+        if (nombre.empty()) {
+            cJSON* from = cJSON_GetObjectItem(callback, "from");
+            cJSON* fn = cJSON_GetObjectItem(from, "first_name");
+            nombre = cJSON_IsString(fn) ? fn->valuestring : "Alguien de la familia";
+        }
+        for (auto& f : botones_familia_) {
+            std::string respuesta;
+            if (f(data->valuestring, from_id, nombre, respuesta)) {
+                if (!respuesta.empty()) SendMessage(respuesta, from_id);
+                return;
+            }
+        }
+    }
+
+    if (from_id != default_chat_id_) return;  // el resto, sólo el administrador
 
     std::string d = data->valuestring;
     for (auto& f : botones_extra_) {
@@ -1385,7 +1467,11 @@ void TelegramBot::HandleIncomingVoice(const std::string& chat_id, const std::str
 
     auto& app = Application::GetInstance();
     ShowAlert(from + " te mandó un audio", true);
+#if CONFIG_MADRE_ENABLE
+    vTaskDelay(pdMS_TO_TICKS(2300));  // dejar sonar la campana
+#else
     vTaskDelay(pdMS_TO_TICKS(1500));  // dejar sonar el aviso
+#endif
 
     ESP_LOGI(TAG, "Reproduciendo audio de %s (%d s)", from.c_str(), duration_s);
     app.GetAudioService().PlaySound(ogg);  // se bloquea mientras carga el audio

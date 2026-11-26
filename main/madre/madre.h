@@ -9,6 +9,8 @@
 
 #pragma once
 
+#include <atomic>
+#include <string_view>
 #include <cstdint>
 #include <ctime>
 #include <functional>
@@ -43,6 +45,18 @@ public:
 
     // La placa avisa cada vez que se toca el botón (confirma recordatorios y cuenta como señal de vida).
     void NotificarBoton();
+
+    // Tono de las notificaciones (campana, main/madre/campana.ogg)
+    static std::string_view SonidoCampana();
+
+    // ---- Emergencia ("Sofía, necesito ayuda", botón apretado 5 segundos)
+    // Avisa a todos los familiares de Telegram. Se puede llamar desde cualquier tarea (no bloquea).
+    // origen: "voz" (lo pidió la IA), "frase" (palabras detectadas por el equipo) o "botón".
+    // Devuelve true si es un pedido nuevo (false si ya había uno en marcha).
+    bool PedirAyuda(const std::string& dijo, const char* origen);
+    // Texto que reconoció el servidor de lo que dijo mamá: si pide ayuda, dispara la emergencia
+    // aunque la IA no responda.
+    void RevisarFraseDeMama(const std::string& texto);
 
     // Datos guardados (JSON). Seguros para llamar desde cualquier tarea.
     std::string GetSeccion(const std::string& seccion);
@@ -104,6 +118,7 @@ private:
         bool remedio = false;
         std::string hora;          // "21:00" (para el resumen)
         std::string corto;         // texto corto para el resumen ("remedios de la noche")
+        std::string rec_id;        // id del recordatorio (para registrar qué pasó)
         int intentos = 0;          // veces que se dijo
         int64_t creado_ms = 0;
         int64_t proximo_ms = 0;    // cuándo decirlo (otra vez)
@@ -145,6 +160,30 @@ private:
     void ActualizarNoticias(int64_t ahora_ms);
     std::string TextoNoticias();
 
+    // ---- Emergencia
+    struct Emergencia {
+        bool activa = false;        // se pidió ayuda y todavía nadie respondió "Voy yo"
+        int id = 0;
+        int envios = 0;
+        int64_t inicio_ms = 0;
+        int64_t ultimo_envio_ms = 0;
+        std::string dijo, origen, hora, quien;
+        int64_t atendida_ms = 0;    // cuándo alguien respondió (0 = nadie)
+    };
+    std::mutex emerg_mutex_;        // orden: emerg_mutex_ solo (no se toma con otros)
+    Emergencia emerg_;
+    std::atomic<bool> emerg_hablar_{false};   // botón: que XiaoZhi la tranquilice
+    std::atomic<bool> emerg_enviar_{false};   // hay un aviso nuevo para mandar
+    void ProcesarEmergencia(int64_t ahora);
+    std::string TextoEmergencia(const Emergencia& e, bool repeticion);
+    std::string EstadoEmergencia();
+    void RegistrarEmergenciaTelegram();
+    bool AtenderEmergencia(const std::string& data, const std::string& chat_id, const std::string& nombre,
+                           std::string& respuesta);
+    void EnviarATodos(const std::string& texto, const std::string& botones, const std::string& salvo = "");
+    std::string ComoLoLlamaMama(const std::string& nombre_telegram);
+    int64_t emerg_prueba_hasta_ms_ = 0;     // modo prueba: los avisos van sólo al administrador
+
     // ---- Resumen diario por Telegram (y /resumen)
     struct Diario {
         time_t desde = 0;                    // desde cuándo cuenta (0 = desde que se encendió)
@@ -164,6 +203,32 @@ private:
     void RevisarResumen(const char* hhmm, int minuto);
     std::string TextoResumen();
     void RegistrarResumenTelegram();
+
+    // ---- Recordatorios desde Telegram (/recordar 28/11 10:30 Turno con el médico)
+    void RegistrarRecordatoriosTelegram();
+    bool GuardarRecordatorios(const std::string& json);
+    std::string AgregarRecordatorioTelegram(const std::string& pedido, std::string& botones);
+    std::string ListaRecordatoriosTelegram(std::string& botones);
+    std::string BorrarRecordatorio(const std::string& id);
+    void LimpiarRecordatoriosViejos();
+    // Qué pasó con cada recordatorio ("esperando", "confirmo_boton", "no_confirmo"...).
+    // Se encola desde cualquier tarea y se guarda en la tarea madre.
+    std::mutex estados_mutex_;
+    std::vector<std::pair<std::string, std::string>> estados_pendientes_;
+    void MarcarEstado(const std::string& rec_id, const char* estado);
+
+    // Avisos que ya le dijo (para "¿tengo algún aviso?", "no lo escuché, repetímelo")
+    struct Escuchado {
+        time_t cuando = 0;
+        int64_t creado_ms = 0;     // identifica el aviso
+        std::string texto;
+        bool pide_confirmar = false;
+        std::string estado;        // "", "confirmo", "no_confirmo"
+    };
+    std::vector<Escuchado> escuchados_;   // protegido por mutex_
+    std::string TextoAvisosRecientes();
+    std::string QuienMandaTelegram();
+    void AplicarEstados();
 
     // ---- Lista de compras (ella la arma con la voz; Julio la pide con /compras)
     std::string AgregarCompras(const std::string& items, bool de_mama = false);

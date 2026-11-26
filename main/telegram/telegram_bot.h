@@ -80,6 +80,20 @@ public:
     // Devuelve vacío si no sabe.
     void SetNameResolver(std::function<std::string(const std::string&)> f) { name_resolver_ = std::move(f); }
 
+    // Emergencias: mensaje urgente que se manda enseguida, aunque XiaoZhi esté hablando.
+    // chat_id vacío = administrador. reply_markup en JSON (botones), opcional.
+    void QueueUrgent(const std::string& text, const std::string& chat_id = "",
+                     const std::string& reply_markup_json = "");
+    // Todos los familiares autorizados (incluye al administrador): (chat_id, nombre)
+    std::vector<std::pair<std::string, std::string>> GetContacts();
+    // Botón que puede tocar cualquier familiar (no sólo el administrador), por ejemplo "Voy yo".
+    // Devuelve true si lo manejó; "respuesta" se le manda a quien lo tocó.
+    using BotonFamilia = std::function<bool(const std::string& data, const std::string& chat_id,
+                                            const std::string& nombre, std::string& respuesta)>;
+    void AddFamilyCallbackHandler(BotonFamilia f);
+    // Nombre del administrador en la lista de familiares (vacío si no figura)
+    std::string AdminName() { return ContactName(default_chat_id_); }
+
 private:
     TelegramBot() = default;
 
@@ -141,6 +155,13 @@ private:
     std::vector<std::string> ayuda_extra_;
     std::vector<BotonExtra> botones_extra_;
     std::function<std::string(const std::string&)> name_resolver_;
+    std::vector<BotonFamilia> botones_familia_;
+    struct Urgente {
+        std::string chat_id, text, markup;
+        int intentos = 0;
+    };
+    std::deque<Urgente> urgent_;   // protegido por data_mutex_
+    void FlushUrgent();
 
     std::mutex http_mutex_;   // una sola conexión TLS a la vez (ahorra RAM)
     std::mutex data_mutex_;   // protege recent_ y announce_pending_
