@@ -1,0 +1,30 @@
+#!/bin/sh
+# ============================================================
+#  XiaoZhi Care - guardia antes de cada commit
+#  Frena el commit si se está por subir información privada:
+#   - el token del bot de Telegram
+#   - números de chat reales en main/telegram/familia.txt
+# ============================================================
+
+# 1) familia.txt: sólo se sube la versión con asteriscos
+if git diff --cached --name-only | grep -q '^main/telegram/familia.txt$'; then
+  if git show :main/telegram/familia.txt | grep -v '^[[:space:]]*#' | grep -Eq '=[[:space:]]*-?[0-9]{5,}'; then
+    echo ""
+    echo "  BLOQUEADO: familia.txt tiene números de Telegram reales."
+    echo "  Para subir la versión con asteriscos:"
+    printf "%s\n" "    Copy-Item -Force _backups\\familia_publico.txt main\\telegram\\familia.txt"
+    echo ""
+    exit 1
+  fi
+fi
+
+# 2) Token del bot o números de chat en cualquier archivo
+if git diff --cached -U0 | grep '^+' | grep -Eq '[0-9]{8,12}:AA[A-Za-z0-9_-]{20,}'; then
+  echo ""
+  echo "  BLOQUEADO: se está por subir un token de bot de Telegram."
+  echo "  Revisá los archivos con: git diff --cached"
+  echo ""
+  exit 1
+fi
+
+exit 0
