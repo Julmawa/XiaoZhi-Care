@@ -1478,6 +1478,17 @@ endif()
 if(CONFIG_TELEGRAM_ENABLE)
     target_add_binary_data(${COMPONENT_LIB} "${CMAKE_CURRENT_SOURCE_DIR}/telegram/familia.txt" TEXT)
 endif()
+# Marca del firmware con la fecha de compilación real (actualización por Telegram)
+if(CONFIG_TELEGRAM_OTA AND NOT CMAKE_BUILD_EARLY_EXPANSION)
+    set(XZ_STAMP_C "${CMAKE_CURRENT_BINARY_DIR}/xz_build_stamp.c")
+    add_custom_target(xz_build_stamp ALL
+        COMMAND ${CMAKE_COMMAND} -DOUT=${XZ_STAMP_C} -P "${CMAKE_CURRENT_SOURCE_DIR}/telegram/build_stamp.cmake"
+        BYPRODUCTS "${XZ_STAMP_C}"
+        VERBATIM)
+    set_source_files_properties("${XZ_STAMP_C}" PROPERTIES GENERATED TRUE)
+    target_sources(${COMPONENT_LIB} PRIVATE "${XZ_STAMP_C}")
+    add_dependencies(${COMPONENT_LIB} xz_build_stamp)
+endif()
 # <<< telegram familia
 # >>> madre pagina
 if(CONFIG_MADRE_ENABLE)

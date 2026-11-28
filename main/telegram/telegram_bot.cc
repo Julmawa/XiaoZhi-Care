@@ -41,6 +41,10 @@
 
 #define TAG "Telegram"
 
+#if CONFIG_TELEGRAM_OTA
+extern "C" const char xz_ota_id[];   // generado al compilar (build_stamp.cmake)
+#endif
+
 // familia.txt se incluye en el firmware al compilar (ver main/CMakeLists.txt)
 extern const char familia_txt_start[] asm("_binary_familia_txt_start");
 extern const char familia_txt_end[] asm("_binary_familia_txt_end");
@@ -65,34 +69,26 @@ constexpr int kRecordSampleRate = 16000;
 constexpr int kBeepVolume = 100;
 
 #if CONFIG_TELEGRAM_OTA
-// Marca de este firmware: placa + bot. Un .bin sólo se instala si trae exactamente
-// la misma marca (así no se le puede cargar el firmware de otro equipo por error).
-const char kOtaMarca[] = "XZOTA|" BOARD_NAME "|" CONFIG_TELEGRAM_BOT_TOKEN "|";
+// Marca de este firmware: "XZOTA|placa|bot|dd/mm/aaaa hh:mm:ss|". La genera
+// main/telegram/build_stamp.cmake en cada compilación, así la fecha siempre es la real.
+// Un .bin sólo se instala si trae la misma placa y el mismo bot.
 // Si la versión nueva no llega a Telegram en este tiempo, vuelve a la anterior.
 constexpr int kOtaMinutosParaConfirmar = 10;
 constexpr int kOtaMinutosValidez = 30;   // el botón "Instalar" vale media hora
+constexpr size_t kLargoFecha = 19;       // "28/11/2026 12:10:05"
 
-// "Nov 27 2026" + "21:30:05" -> "27/11/2026 21:30"
-std::string FechaFirmware(const char* date, const char* time) {
-    static const char* const kMeses[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                                         "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-    char mes[4] = {0};
-    int dia = 0, anio = 0;
-    if (sscanf(date, "%3s %d %d", mes, &dia, &anio) == 3) {
-        for (int i = 0; i < 12; i++) {
-            if (strcmp(mes, kMeses[i]) == 0) {
-                char buf[32];
-                snprintf(buf, sizeof(buf), "%02d/%02d/%d %.5s", dia, i + 1, anio, time);
-                return buf;
-            }
-        }
-    }
-    return std::string(date) + " " + time;
+// Parte fija de la marca (sin la fecha): "XZOTA|placa|bot|"
+std::string PrefijoMarca() {
+    std::string id = xz_ota_id;
+    return id.size() > kLargoFecha + 1 ? id.substr(0, id.size() - kLargoFecha - 1) : id;
 }
-
-std::string SelloFirmware(const esp_app_desc_t* d) {
-    return d ? std::string(d->date) + " " + d->time : "";
+// Fecha de compilación de este firmware: "28/11/2026 12:10:05"
+std::string SelloPropio() {
+    std::string id = xz_ota_id;
+    return id.size() > kLargoFecha + 1 ? id.substr(id.size() - kLargoFecha - 1, kLargoFecha) : "";
 }
+// "28/11/2026 12:10:05" -> "28/11/2026 12:10"
+std::string FechaCorta(const std::string& sello) { return sello.substr(0, 16); }
 
 bool VersionSinConfirmar() {
     esp_ota_img_states_t estado;
@@ -435,7 +431,7 @@ void TelegramBot::Start() {
             if (cmd != "/version") return false;
             const esp_app_desc_t* d = esp_app_get_description();
             const esp_partition_t* p = esp_ota_get_running_partition();
-            texto = "📦 Versión instalada: compilada el " + FechaFirmware(d->date, d->time) + "\n" +
+            texto = "📦 Versión instalada: compilada el " + FechaCorta(SelloPropio()) + "\n" +
                     "Placa: " BOARD_NAME ", versión " + d->version + ", lugar " + (p ? p->label : "?") +
                     "\n\nPara actualizar, mandame acá el archivo xiaozhi.bin (como archivo, con el clip 📎).";
             return true;
@@ -1546,10 +1542,12 @@ void TelegramBot::ReportFirmwareAfterBoot() {
     settings.EraseKey("antes");
 
     const esp_app_desc_t* d = esp_app_get_description();
-    std::string ahora = SelloFirmware(d);
-    std::string fecha = FechaFirmware(d->date, d->time);
+    (void)d;
+    std::string ahora = SelloPropio();
+    std::string fecha = FechaCorta(ahora);
     std::lock_guard<std::mutex> lock(data_mutex_);
-    if (ahora == esperado) {
+    // Volvió a la anterior sólo si sigue la misma versión de antes (y no era la misma que se instaló)
+    if (ahora == esperado || ahora != anterior) {
         outbox_.push_back({default_chat_id_, "✅ Actualización instalada. El equipo ya tiene la versión compilada el " +
                                                  fecha + "."});
     } else {
@@ -1557,7 +1555,6 @@ void TelegramBot::ReportFirmwareAfterBoot() {
                            "⚠️ La versión nueva no arrancó bien y el equipo volvió solo a la anterior "
                            "(compilada el " + fecha + "). No se perdió nada."});
     }
-    (void)anterior;
 }
 
 bool TelegramBot::CheckFirmwareFile(const std::string& url, std::string& info, std::string& error) {
@@ -1573,6 +1570,15 @@ bool TelegramBot::CheckFirmwareFile(const std::string& url, std::string& info, s
         return false;
     }
     http->SetTimeout(30000);
+    // En reposo el WiFi ahorra energía y baja muy lento: durante la revisión, a toda velocidad
+    Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+    struct RestaurarWifi {
+        ~RestaurarWifi() {
+            if (Application::GetInstance().GetDeviceState() == kDeviceStateIdle) {
+                Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+            }
+        }
+    } restaurar;
     if (auto opened = http->Open("GET", url); !opened) {
         error = "no se pudo bajar el archivo";
         return false;
@@ -1584,7 +1590,9 @@ bool TelegramBot::CheckFirmwareFile(const std::string& url, std::string& info, s
         return false;
     }
 
-    const size_t marca_len = sizeof(kOtaMarca) - 1;
+    const std::string prefijo = PrefijoMarca();
+    const size_t marca_len = prefijo.size();
+    std::string fecha_nueva;   // fecha que viene después de la marca
     constexpr size_t kTrozo = 4096;
     std::string buffer(kTrozo, '\0');
     std::string cabecera;   // primeros bytes: datos de la versión
@@ -1602,10 +1610,15 @@ bool TelegramBot::CheckFirmwareFile(const std::string& url, std::string& info, s
         if (n <= 0) break;
         total += n;
         if (cabecera.size() < 512) cabecera.append(buffer.data(), std::min<size_t>(n, 512 - cabecera.size()));
+        if (marca && fecha_nueva.size() < kLargoFecha) {
+            fecha_nueva.append(buffer.data(), std::min<size_t>(n, kLargoFecha - fecha_nueva.size()));
+        }
         if (!marca) {
             std::string ventana = cola + std::string(buffer.data(), n);
-            if (ventana.find(kOtaMarca, 0, marca_len) != std::string::npos) {
+            size_t pos = ventana.find(prefijo);
+            if (pos != std::string::npos) {
                 marca = true;
+                fecha_nueva = ventana.substr(pos + marca_len, kLargoFecha);
             } else if (ventana.size() >= marca_len) {
                 cola = ventana.substr(ventana.size() - (marca_len - 1));
             } else {
@@ -1644,10 +1657,14 @@ bool TelegramBot::CheckFirmwareFile(const std::string& url, std::string& info, s
     desc.date[sizeof(desc.date) - 1] = '\0';
     desc.time[sizeof(desc.time) - 1] = '\0';
     desc.version[sizeof(desc.version) - 1] = '\0';
-    info = SelloFirmware(&desc);
+    if (fecha_nueva.size() != kLargoFecha || fecha_nueva[2] != '/') {
+        error = "le falta la fecha de compilación (compilalo de nuevo)";
+        return false;
+    }
+    info = fecha_nueva;
     char tam[24];
     snprintf(tam, sizeof(tam), "%.1f MB", total / (1024.0 * 1024.0));
-    error = FechaFirmware(desc.date, desc.time) + "|" + tam;   // texto para el mensaje
+    error = FechaCorta(fecha_nueva) + "|" + tam;   // texto para el mensaje
     return true;
 }
 
@@ -1681,14 +1698,15 @@ void TelegramBot::HandleFirmwareDocument(cJSON* document) {
 
     const esp_app_desc_t* actual = esp_app_get_description();
     std::string aviso;
-    if (sello == SelloFirmware(actual)) aviso = "\n(Ojo: es la misma versión que ya tiene.)";
+    (void)actual;
+    if (sello == SelloPropio()) aviso = "\n(Ojo: es la misma versión que ya tiene.)";
 
     ota_file_id_ = file_id->valuestring;
     ota_file_info_ = sello;
     ota_checked_us_ = esp_timer_get_time();
     SendMessage("✅ El archivo está bien y es para este equipo.\n"
                 "Versión nueva: compilada el " + fecha + " (" + tam + ")\n"
-                "Versión actual: compilada el " + FechaFirmware(actual->date, actual->time) + aviso +
+                "Versión actual: compilada el " + FechaCorta(SelloPropio()) + aviso +
                 "\n\n¿La instalo? El equipo se reinicia y vuelve en un par de minutos.",
                 default_chat_id_,
                 "{\"inline_keyboard\":[[{\"text\":\"⬇️ Instalar ahora\",\"callback_data\":\"ota:si\"},"
@@ -1725,7 +1743,7 @@ void TelegramBot::StartFirmwareInstall() {
     {
         Settings settings("tg_ota", true);
         settings.SetString("espera", sello);
-        settings.SetString("antes", SelloFirmware(esp_app_get_description()));
+        settings.SetString("antes", SelloPropio());
     }
     SendToAdmin("⬇️ Instalando... El equipo se va a reiniciar. Te aviso cuando vuelva.");
     ota_running_ = true;
