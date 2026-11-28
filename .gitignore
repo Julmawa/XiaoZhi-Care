@@ -27,3 +27,9 @@ _backups/
 # Copias de seguridad exportadas desde la página (datos personales)
 XiaoZhi_Madre_copia_*.json
 XiaoZhi_Care_Backup*.json
+# Configuración del equipo de mamá (tiene el token del bot)
+sdkconfig.madre
+# Configuración de la placa de pruebas (tiene el token del bot de pruebas)
+sdkconfig.pruebas
+# Configuración pruebas-lcd (tiene el token del bot de pruebas)
+sdkconfig.pruebas-lcd

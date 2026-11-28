@@ -49,6 +49,63 @@
       "binaryDir": "${sourceDir}/build/madre",
       "cacheVariables": {
         "SDKCONFIG": "${sourceDir}/build/madre/sdkconfig",
+        "SDKCONFIG_DEFAULTS": "${sourceDir}/sdkconfig.defaults;${sourceDir}/sdkconfig.madre",
+        "IDF_TARGET": "esp32s3"
+      },
+      "vendor": {
+        "espressif/vscode-esp-idf": {
+          "schemaVersion": 1,
+          "settings": [
+            {
+              "type": "openOCD",
+              "value": {
+                "debugLevel": 2,
+                "configs": [
+                  "board/esp32s3-builtin.cfg"
+                ],
+                "args": []
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "pruebas",
+      "displayName": "Pruebas (placa de pruebas, bot Xiaozhi Pruebas)",
+      "description": "Igual que el equipo de mamá, pero con el bot de pruebas",
+      "binaryDir": "${sourceDir}/build/pruebas",
+      "cacheVariables": {
+        "SDKCONFIG": "${sourceDir}/build/pruebas/sdkconfig",
+        "SDKCONFIG_DEFAULTS": "${sourceDir}/sdkconfig.defaults;${sourceDir}/sdkconfig.pruebas",
+        "IDF_TARGET": "esp32s3"
+      },
+      "vendor": {
+        "espressif/vscode-esp-idf": {
+          "schemaVersion": 1,
+          "settings": [
+            {
+              "type": "openOCD",
+              "value": {
+                "debugLevel": 2,
+                "configs": [
+                  "board/esp32s3-builtin.cfg"
+                ],
+                "args": []
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "pruebas-lcd",
+      "displayName": "Pruebas LCD (como Default 240x240 + todo lo de mamá, bot Xiaozhi Pruebas)",
+      "description": "Copia de Default (pantalla 240x240) con página web, recordatorios, emergencia y Sofía; bot de pruebas",
+      "binaryDir": "${sourceDir}/build/pruebas-lcd",
+      "cacheVariables": {
+        "SDKCONFIG": "${sourceDir}/build/pruebas-lcd/sdkconfig",
+        "SDKCONFIG_DEFAULTS": "${sourceDir}/sdkconfig.defaults;${sourceDir}/sdkconfig.pruebas-lcd",
         "IDF_TARGET": "esp32s3"
       },
       "vendor": {

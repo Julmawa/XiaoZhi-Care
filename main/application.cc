@@ -493,6 +493,15 @@ void Application::CheckNewVersion() {
         retry_count = 0;
         retry_delay = 10;  // Reset retry delay
 
+#if CONFIG_TELEGRAM_OTA
+        // Firmware updated from Telegram: never take the official server's firmware
+        // (it would overwrite this build). The Telegram bot marks the running version
+        // as valid once it reaches Telegram, so a bad update rolls back.
+        if (ota_->HasNewVersion()) {
+            ESP_LOGW(TAG, "Ignoring server firmware %s (updates come from Telegram)",
+                     ota_->GetFirmwareVersion().c_str());
+        }
+#else
         if (ota_->HasNewVersion()) {
             if (UpgradeFirmware(ota_->GetFirmwareUrl(), ota_->GetFirmwareVersion())) {
                 return;  // This line will never be reached after reboot
@@ -502,6 +511,7 @@ void Application::CheckNewVersion() {
 
         // No new version, mark the current version as valid
         ota_->MarkCurrentVersionValid();
+#endif
         if (!ota_->HasActivationCode() && !ota_->HasActivationChallenge()) {
             // Exit the loop if done checking new version
             break;

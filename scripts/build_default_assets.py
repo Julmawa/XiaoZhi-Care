@@ -779,6 +779,10 @@ def get_emoji_collection_path(default_emoji_collection, noto_fonts_path, project
     if not default_emoji_collection:
         return None
     
+    # A directory path can be given directly (e.g. main/madre/emoji_gif)
+    if os.path.isdir(default_emoji_collection):
+        return default_emoji_collection
+
     # Special handling for otto-gif collection
     if default_emoji_collection == 'otto-gif':
         if project_root:

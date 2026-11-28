@@ -9,6 +9,9 @@
 #include "lamp_controller.h"
 #include "led/single_led.h"
 #include "telegram_bot.h"
+#if CONFIG_MADRE_ENABLE
+#include "madre.h"
+#endif
 
 #include <driver/gpio.h>
 #include <esp_lcd_panel_commands.h>
@@ -161,6 +164,9 @@ private:
                 EnterWifiConfigMode();
                 return;
             }
+#if CONFIG_MADRE_ENABLE
+            Madre::GetInstance().NotificarBoton();
+#endif
             // Mensaje de voz de Telegram: el toque termina la grabación y la envía
             if (TelegramBot::GetInstance().IsVoiceBusy()) {
                 TelegramBot::GetInstance().HandleButtonDuringVoice();
@@ -176,6 +182,9 @@ private:
             if (app.GetDeviceState() == kDeviceStateStarting) {
                 return;
             }
+#if CONFIG_MADRE_ENABLE
+            Madre::GetInstance().NotificarBoton();
+#endif
             // Mensaje de voz de Telegram: el toque termina la grabación y la envía
             if (TelegramBot::GetInstance().IsVoiceBusy()) {
                 TelegramBot::GetInstance().HandleButtonDuringVoice();
@@ -183,6 +192,14 @@ private:
             }
             app.ToggleChatState();
         });
+
+#if CONFIG_MADRE_ENABLE
+        // Mantener el TTP223 apretado 5 segundos = pedir ayuda (avisa a toda la familia)
+        touch_button_.OnLongPress([]() {
+            ESP_LOGW(TAG, "TTP223: botón mantenido 5 s -> pedido de ayuda");
+            Madre::GetInstance().PedirAyuda("", "botón");
+        });
+#endif
     }
 
     // 物联网初始化，添加对 AI 可见设备
@@ -193,7 +210,11 @@ private:
 public:
     CompactWifiBoardLCD() :
         boot_button_(BOOT_BUTTON_GPIO),
+#if CONFIG_MADRE_ENABLE
+        touch_button_(TOUCH_BUTTON_GPIO, true, 5000) {
+#else
         touch_button_(TOUCH_BUTTON_GPIO, true) {
+#endif
         InitializeSpi();
         InitializeLcdDisplay();
         InitializeButtons();

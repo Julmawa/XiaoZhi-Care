@@ -32,6 +32,12 @@
 #if CONFIG_MADRE_ENABLE
 #include "madre.h"   // campana de notificación
 #endif
+#if CONFIG_TELEGRAM_OTA
+#include <esp_app_desc.h>
+#include <esp_image_format.h>
+#include <esp_ota_ops.h>
+#include <esp_system.h>
+#endif
 
 #define TAG "Telegram"
 
@@ -57,6 +63,43 @@ constexpr int kHttpConnectId = 3;        // sólo importa en placas 4G (ML307); 
 constexpr int kOpusFrameMs = 60;         // duración de cada paquete Opus grabado
 constexpr int kRecordSampleRate = 16000;
 constexpr int kBeepVolume = 100;
+
+#if CONFIG_TELEGRAM_OTA
+// Marca de este firmware: placa + bot. Un .bin sólo se instala si trae exactamente
+// la misma marca (así no se le puede cargar el firmware de otro equipo por error).
+const char kOtaMarca[] = "XZOTA|" BOARD_NAME "|" CONFIG_TELEGRAM_BOT_TOKEN "|";
+// Si la versión nueva no llega a Telegram en este tiempo, vuelve a la anterior.
+constexpr int kOtaMinutosParaConfirmar = 10;
+constexpr int kOtaMinutosValidez = 30;   // el botón "Instalar" vale media hora
+
+// "Nov 27 2026" + "21:30:05" -> "27/11/2026 21:30"
+std::string FechaFirmware(const char* date, const char* time) {
+    static const char* const kMeses[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                         "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    char mes[4] = {0};
+    int dia = 0, anio = 0;
+    if (sscanf(date, "%3s %d %d", mes, &dia, &anio) == 3) {
+        for (int i = 0; i < 12; i++) {
+            if (strcmp(mes, kMeses[i]) == 0) {
+                char buf[32];
+                snprintf(buf, sizeof(buf), "%02d/%02d/%d %.5s", dia, i + 1, anio, time);
+                return buf;
+            }
+        }
+    }
+    return std::string(date) + " " + time;
+}
+
+std::string SelloFirmware(const esp_app_desc_t* d) {
+    return d ? std::string(d->date) + " " + d->time : "";
+}
+
+bool VersionSinConfirmar() {
+    esp_ota_img_states_t estado;
+    const esp_partition_t* p = esp_ota_get_running_partition();
+    return p && esp_ota_get_state_partition(p, &estado) == ESP_OK && estado == ESP_OTA_IMG_PENDING_VERIFY;
+}
+#endif
 
 // Encabezado del familia.txt que se exporta por Telegram
 const char kFamilyFileHeader[] =
@@ -386,6 +429,39 @@ void TelegramBot::Start() {
 
     RegisterMcpTools();
 
+#if CONFIG_TELEGRAM_OTA
+    AddAdminCommand(
+        [](const std::string& cmd, const std::string&, std::string& texto, std::string&) {
+            if (cmd != "/version") return false;
+            const esp_app_desc_t* d = esp_app_get_description();
+            const esp_partition_t* p = esp_ota_get_running_partition();
+            texto = "📦 Versión instalada: compilada el " + FechaFirmware(d->date, d->time) + "\n" +
+                    "Placa: " BOARD_NAME ", versión " + d->version + ", lugar " + (p ? p->label : "?") +
+                    "\n\nPara actualizar, mandame acá el archivo xiaozhi.bin (como archivo, con el clip 📎).";
+            return true;
+        },
+        "/version - ver qué versión tiene el equipo (para actualizarlo, mandá el archivo xiaozhi.bin)");
+
+    // Si la versión que arrancó es una actualización sin confirmar, tiene un tiempo para
+    // llegar a Telegram. Si no lo logra, el equipo vuelve a la versión anterior.
+    if (VersionSinConfirmar()) {
+        ESP_LOGW(TAG, "Versión nueva sin confirmar: tiene %d minutos para llegar a Telegram",
+                 kOtaMinutosParaConfirmar);
+        esp_timer_create_args_t args = {};
+        args.callback = [](void*) {
+            if (VersionSinConfirmar()) {
+                ESP_LOGE(TAG, "La versión nueva no llegó a Telegram: vuelvo a la anterior");
+                esp_ota_mark_app_invalid_rollback_and_reboot();
+            }
+        };
+        args.name = "ota_confirmar";
+        esp_timer_handle_t timer = nullptr;
+        if (esp_timer_create(&args, &timer) == ESP_OK) {
+            esp_timer_start_once(timer, (uint64_t)kOtaMinutosParaConfirmar * 60 * 1000000ULL);
+        }
+    }
+#endif
+
     // La pila va en RAM interna: TLS + cJSON necesitan ~8 KB.
     xTaskCreate(TaskEntry, "telegram", 8192, this, 1, nullptr);  // prioridad baja: el audio siempre primero
 }
@@ -410,6 +486,9 @@ void TelegramBot::PollLoop() {
 
     wait_idle();
     SkipOldUpdates();
+#if CONFIG_TELEGRAM_OTA
+    ReportFirmwareAfterBoot();
+#endif
 
     // El administrador también es un contacto (para que la usuaria pueda escribirle)
     if (!default_chat_id_.empty() && !IsContact(default_chat_id_)) {
@@ -435,6 +514,11 @@ void TelegramBot::PollLoop() {
 
     int64_t next_poll_us = 0;
     while (true) {
+        // Actualizando el firmware: no usar la red mientras tanto
+        if (ota_running_) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
         // Grabación de audio pedida por el asistente
         if (record_pending_) {
             HandlePendingRecording();
@@ -647,6 +731,9 @@ bool TelegramBot::SendMessage(const std::string& text, const std::string& chat_i
 void TelegramBot::SkipOldUpdates() {
     std::string response;
     if (!ApiCall("getUpdates", "{\"offset\":-1,\"timeout\":0}", response)) return;
+#if CONFIG_TELEGRAM_OTA
+    ConfirmFirmwareValid();
+#endif
 
     cJSON* root = cJSON_Parse(response.c_str());
     if (root == nullptr) return;
@@ -669,6 +756,9 @@ void TelegramBot::PollOnce() {
 
     std::string response;
     if (!ApiCall("getUpdates", body, response)) return;
+#if CONFIG_TELEGRAM_OTA
+    ConfirmFirmwareValid();
+#endif
 
     cJSON* root = cJSON_Parse(response.c_str());
     if (root == nullptr) {
@@ -790,6 +880,15 @@ void TelegramBot::HandleUpdate(cJSON* update) {
         }
         return;
     }
+
+#if CONFIG_TELEGRAM_OTA
+    // Archivo del administrador: puede ser una actualización del firmware
+    cJSON* document = cJSON_GetObjectItem(message, "document");
+    if (cJSON_IsObject(document) && chat_id == default_chat_id_ && !is_group) {
+        HandleFirmwareDocument(document);
+        return;
+    }
+#endif
 
     if (!IsAllowed(chat_id)) {
         if (!is_group) {
@@ -1222,6 +1321,17 @@ void TelegramBot::HandleCallbackQuery(cJSON* callback) {
     if (from_id != default_chat_id_) return;  // el resto, sólo el administrador
 
     std::string d = data->valuestring;
+#if CONFIG_TELEGRAM_OTA
+    if (d == "ota:si") {
+        StartFirmwareInstall();
+        return;
+    }
+    if (d == "ota:no") {
+        ota_file_id_.clear();
+        SendToAdmin("Listo, no instalo nada. El equipo sigue como estaba.");
+        return;
+    }
+#endif
     for (auto& f : botones_extra_) {
         std::string texto, botones;
         if (f(d, texto, botones)) {
@@ -1407,12 +1517,248 @@ bool TelegramBot::HandleAdminCommand(const std::string& text) {
     return true;
 }
 
+#if CONFIG_TELEGRAM_OTA
+// ---------------------------------------------------------------------------
+// Actualización del firmware por Telegram
+//  1) El administrador manda xiaozhi.bin como archivo.
+//  2) Se revisa entero (que sea de esta placa y este bot) sin instalar nada.
+//  3) Con el botón "Instalar" se graba en la otra mitad de la memoria y se reinicia.
+//  4) La versión nueva queda "a prueba": si llega a Telegram se confirma; si no,
+//     el equipo vuelve solo a la versión anterior.
+// ---------------------------------------------------------------------------
+
+void TelegramBot::ConfirmFirmwareValid() {
+    static bool hecho = false;
+    if (hecho) return;
+    hecho = true;
+    if (VersionSinConfirmar()) {
+        ESP_LOGI(TAG, "La versión nueva llegó a Telegram: queda confirmada");
+        esp_ota_mark_app_valid_cancel_rollback();
+    }
+}
+
+void TelegramBot::ReportFirmwareAfterBoot() {
+    Settings settings("tg_ota", true);
+    std::string esperado = settings.GetString("espera");
+    if (esperado.empty()) return;
+    std::string anterior = settings.GetString("antes");
+    settings.EraseKey("espera");
+    settings.EraseKey("antes");
+
+    const esp_app_desc_t* d = esp_app_get_description();
+    std::string ahora = SelloFirmware(d);
+    std::string fecha = FechaFirmware(d->date, d->time);
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    if (ahora == esperado) {
+        outbox_.push_back({default_chat_id_, "✅ Actualización instalada. El equipo ya tiene la versión compilada el " +
+                                                 fecha + "."});
+    } else {
+        outbox_.push_back({default_chat_id_,
+                           "⚠️ La versión nueva no arrancó bien y el equipo volvió solo a la anterior "
+                           "(compilada el " + fecha + "). No se perdió nada."});
+    }
+    (void)anterior;
+}
+
+bool TelegramBot::CheckFirmwareFile(const std::string& url, std::string& info, std::string& error) {
+    std::lock_guard<std::mutex> lock(http_mutex_);
+    auto network = Board::GetInstance().GetNetwork();
+    if (network == nullptr) {
+        error = "no hay red";
+        return false;
+    }
+    auto http = network->CreateHttp(kHttpConnectId);
+    if (!http) {
+        error = "no se pudo abrir la conexión";
+        return false;
+    }
+    http->SetTimeout(30000);
+    if (auto opened = http->Open("GET", url); !opened) {
+        error = "no se pudo bajar el archivo";
+        return false;
+    }
+    auto status = http->GetStatusCode();
+    if (!status || *status != 200) {
+        http->Close();
+        error = "Telegram no me dio el archivo";
+        return false;
+    }
+
+    const size_t marca_len = sizeof(kOtaMarca) - 1;
+    constexpr size_t kTrozo = 4096;
+    std::string buffer(kTrozo, '\0');
+    std::string cabecera;   // primeros bytes: datos de la versión
+    std::string cola;       // final del trozo anterior (la marca puede quedar partida)
+    size_t total = 0;
+    bool marca = false;
+    while (true) {
+        auto r = http->Read(buffer.data(), kTrozo);
+        if (!r) {
+            http->Close();
+            error = "se cortó la descarga";
+            return false;
+        }
+        int n = *r;
+        if (n <= 0) break;
+        total += n;
+        if (cabecera.size() < 512) cabecera.append(buffer.data(), std::min<size_t>(n, 512 - cabecera.size()));
+        if (!marca) {
+            std::string ventana = cola + std::string(buffer.data(), n);
+            if (ventana.find(kOtaMarca, 0, marca_len) != std::string::npos) {
+                marca = true;
+            } else if (ventana.size() >= marca_len) {
+                cola = ventana.substr(ventana.size() - (marca_len - 1));
+            } else {
+                cola = ventana;
+            }
+        }
+    }
+    http->Close();
+
+    const size_t desc_pos = sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t);
+    if (cabecera.size() < desc_pos + sizeof(esp_app_desc_t)) {
+        error = "el archivo es demasiado chico, no es un firmware";
+        return false;
+    }
+    esp_image_header_t img;
+    memcpy(&img, cabecera.data(), sizeof(img));
+    esp_app_desc_t desc;
+    memcpy(&desc, cabecera.data() + desc_pos, sizeof(desc));
+    if (img.magic != ESP_IMAGE_HEADER_MAGIC || desc.magic_word != ESP_APP_DESC_MAGIC_WORD) {
+        error = "no es un firmware (mandá el xiaozhi.bin de la carpeta build)";
+        return false;
+    }
+    if (img.chip_id != CONFIG_IDF_FIRMWARE_CHIP_ID) {
+        error = "es para otro tipo de chip";
+        return false;
+    }
+    const esp_partition_t* destino = esp_ota_get_next_update_partition(nullptr);
+    if (destino == nullptr || total > destino->size) {
+        error = "es más grande que el lugar que hay en la memoria";
+        return false;
+    }
+    if (!marca) {
+        error = "es de otro equipo (otra placa u otro bot). Revisá que sea el de la configuración correcta";
+        return false;
+    }
+    desc.date[sizeof(desc.date) - 1] = '\0';
+    desc.time[sizeof(desc.time) - 1] = '\0';
+    desc.version[sizeof(desc.version) - 1] = '\0';
+    info = SelloFirmware(&desc);
+    char tam[24];
+    snprintf(tam, sizeof(tam), "%.1f MB", total / (1024.0 * 1024.0));
+    error = FechaFirmware(desc.date, desc.time) + "|" + tam;   // texto para el mensaje
+    return true;
+}
+
+void TelegramBot::HandleFirmwareDocument(cJSON* document) {
+    cJSON* file_id = cJSON_GetObjectItem(document, "file_id");
+    cJSON* name = cJSON_GetObjectItem(document, "file_name");
+    cJSON* size = cJSON_GetObjectItem(document, "file_size");
+    std::string nombre = cJSON_IsString(name) ? name->valuestring : "";
+    if (!cJSON_IsString(file_id) || nombre.size() < 4 || nombre.substr(nombre.size() - 4) != ".bin") {
+        SendToAdmin("Recibí un archivo, pero para actualizar el equipo tiene que ser el xiaozhi.bin.");
+        return;
+    }
+    if (cJSON_IsNumber(size) && size->valuedouble > 20 * 1024 * 1024) {
+        SendToAdmin("El archivo es demasiado grande para Telegram (más de 20 MB).");
+        return;
+    }
+
+    SendToAdmin("Recibí " + nombre + ". Lo reviso antes de instalar nada (tarda un minuto)...");
+    std::string url, sello, texto;
+    if (!GetFileUrl(file_id->valuestring, url)) {
+        SendToAdmin("❌ No pude bajar el archivo de Telegram. Probá mandarlo de nuevo.");
+        return;
+    }
+    if (!CheckFirmwareFile(url, sello, texto)) {
+        SendToAdmin("❌ No lo instalo: " + texto + ".");
+        return;
+    }
+    size_t sep = texto.find('|');
+    std::string fecha = texto.substr(0, sep);
+    std::string tam = sep == std::string::npos ? "" : texto.substr(sep + 1);
+
+    const esp_app_desc_t* actual = esp_app_get_description();
+    std::string aviso;
+    if (sello == SelloFirmware(actual)) aviso = "\n(Ojo: es la misma versión que ya tiene.)";
+
+    ota_file_id_ = file_id->valuestring;
+    ota_file_info_ = sello;
+    ota_checked_us_ = esp_timer_get_time();
+    SendMessage("✅ El archivo está bien y es para este equipo.\n"
+                "Versión nueva: compilada el " + fecha + " (" + tam + ")\n"
+                "Versión actual: compilada el " + FechaFirmware(actual->date, actual->time) + aviso +
+                "\n\n¿La instalo? El equipo se reinicia y vuelve en un par de minutos.",
+                default_chat_id_,
+                "{\"inline_keyboard\":[[{\"text\":\"⬇️ Instalar ahora\",\"callback_data\":\"ota:si\"},"
+                "{\"text\":\"Cancelar\",\"callback_data\":\"ota:no\"}]]}");
+}
+
+void TelegramBot::StartFirmwareInstall() {
+    if (ota_file_id_.empty() ||
+        esp_timer_get_time() - ota_checked_us_ > (int64_t)kOtaMinutosValidez * 60 * 1000000) {
+        ota_file_id_.clear();
+        SendToAdmin("Ese botón ya venció. Mandame el archivo de nuevo.");
+        return;
+    }
+    std::string url;
+    if (!GetFileUrl(ota_file_id_, url)) {
+        SendToAdmin("❌ No pude bajar el archivo de Telegram. Probá de nuevo en un rato.");
+        return;
+    }
+    std::string sello = ota_file_info_;
+    ota_file_id_.clear();
+
+    auto& app = Application::GetInstance();
+    if (app.GetDeviceState() != kDeviceStateIdle) {
+        SendToAdmin("Mamá está usando el equipo. Instalo apenas termine...");
+        for (int i = 0; i < 600 && app.GetDeviceState() != kDeviceStateIdle; i++) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+        if (app.GetDeviceState() != kDeviceStateIdle) {
+            SendToAdmin("No se desocupó en 10 minutos, así que no instalé nada. Mandame el archivo de nuevo más tarde.");
+            return;
+        }
+    }
+
+    {
+        Settings settings("tg_ota", true);
+        settings.SetString("espera", sello);
+        settings.SetString("antes", SelloFirmware(esp_app_get_description()));
+    }
+    SendToAdmin("⬇️ Instalando... El equipo se va a reiniciar. Te aviso cuando vuelva.");
+    ota_running_ = true;
+    app.Schedule([this, url]() {
+        auto& a = Application::GetInstance();
+        if (a.UpgradeFirmware(url, "Telegram")) return;   // si sale bien, se reinicia
+        {
+            Settings settings("tg_ota", true);
+            settings.EraseKey("espera");
+            settings.EraseKey("antes");
+        }
+        a.SetDeviceState(kDeviceStateIdle);
+        ota_running_ = false;
+        QueueMessage("❌ No se pudo instalar la actualización (se cortó la descarga o el archivo vino mal). "
+                     "El equipo sigue con la versión de antes.");
+    });
+}
+#endif  // CONFIG_TELEGRAM_OTA
+
 // ---------------------------------------------------------------------------
 // Notas de voz: recepción
 // ---------------------------------------------------------------------------
 
 bool TelegramBot::DownloadFile(const std::string& file_id, std::string& data) {
-    // 1) Pedir la ruta del archivo
+    std::string url;
+    if (!GetFileUrl(file_id, url)) return false;
+    if (!HttpRequest("GET", url, "", "", data, 30000)) return false;
+    ESP_LOGI(TAG, "Audio descargado: %u bytes", (unsigned)data.size());
+    return !data.empty();
+}
+
+// Dirección de descarga de un archivo de Telegram (vale al menos una hora)
+bool TelegramBot::GetFileUrl(const std::string& file_id, std::string& url) {
     cJSON* req = cJSON_CreateObject();
     cJSON_AddStringToObject(req, "file_id", file_id.c_str());
     char* body = cJSON_PrintUnformatted(req);
@@ -1436,11 +1782,8 @@ bool TelegramBot::DownloadFile(const std::string& file_id, std::string& data) {
         return false;
     }
 
-    // 2) Descargarlo
-    std::string url = std::string("https://api.telegram.org/file/bot") + CONFIG_TELEGRAM_BOT_TOKEN + "/" + file_path;
-    if (!HttpRequest("GET", url, "", "", data, 30000)) return false;
-    ESP_LOGI(TAG, "Audio descargado: %u bytes", (unsigned)data.size());
-    return !data.empty();
+    url = std::string("https://api.telegram.org/file/bot") + CONFIG_TELEGRAM_BOT_TOKEN + "/" + file_path;
+    return true;
 }
 
 void TelegramBot::HandleIncomingVoice(const std::string& chat_id, const std::string& from,

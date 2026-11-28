@@ -176,6 +176,18 @@ private:
     std::vector<std::string> record_targets_;  // destinatarios del audio en curso
     std::string record_target_names_;
 
+    // Actualización del firmware por Telegram (CONFIG_TELEGRAM_OTA)
+    bool GetFileUrl(const std::string& file_id, std::string& url);
+    void HandleFirmwareDocument(cJSON* document);
+    bool CheckFirmwareFile(const std::string& url, std::string& info, std::string& error);
+    void StartFirmwareInstall();
+    void ReportFirmwareAfterBoot();
+    void ConfirmFirmwareValid();
+    std::string ota_file_id_;          // archivo revisado, esperando "Instalar"
+    std::string ota_file_info_;        // "compilado el 27/11/2026 21:30"
+    int64_t ota_checked_us_ = 0;
+    std::atomic<bool> ota_running_{false};
+
     // Grabación pedida por el asistente
     std::atomic<bool> record_pending_{false};
     std::atomic<int> record_seconds_{10};

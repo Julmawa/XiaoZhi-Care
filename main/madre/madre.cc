@@ -125,6 +125,48 @@ std::string FechaLinda(const std::string& iso) {
     return buf;
 }
 
+std::string ClaveCompra(const std::string& s);   // más abajo (minúsculas, sin acentos)
+
+// Cuántas pastillas hay en el casillero: "2,5 mg, 1 pastilla" -> 1 ; "media pastilla" -> 1 ; sin dato -> 1
+double ContarPastillas(const std::string& dosis) {
+    std::string d = " " + ClaveCompra(dosis) + " ";
+    for (char& c : d) {
+        if (c == ',' || c == ';' || c == '(' || c == ')') c = ' ';
+    }
+    for (const char* unidad : {"pastilla", "comprimido", "capsula", "tableta"}) {
+        size_t p = d.find(unidad);
+        if (p == std::string::npos) continue;
+        // palabra anterior
+        size_t fin = d.find_last_not_of(' ', p - 1);
+        if (fin == std::string::npos) return 1;
+        size_t ini = d.find_last_of(' ', fin);
+        std::string w = d.substr(ini + 1, fin - ini);
+        if (w == "media" || w == "medio") return 1;    // media pastilla: igual es una en el casillero
+        if (w == "un" || w == "una") return 1;
+        if (w == "dos") return 2;
+        if (w == "tres") return 3;
+        if (w == "cuatro") return 4;
+        std::string n = w;
+        for (char& c : n) {
+            if (c == ',') c = '.';
+        }
+        double v = atof(n.c_str());
+        if (v > 0 && v < 20) return (double)(int)(v + 0.99);   // 1,5 -> 2 pedazos en el casillero
+        return 1;
+    }
+    return 1;
+}
+
+// 2 -> "2 pastillas", 1 -> "1 pastilla", 0.5 -> "media pastilla", 1.5 -> "1 pastilla y media"
+std::string TextoPastillas(double n) {
+    int enteras = (int)n;
+    bool media = (n - enteras) > 0.25;
+    if (enteras == 0) return media ? "media pastilla" : "las pastillas";
+    std::string s = std::to_string(enteras) + (enteras == 1 ? " pastilla" : " pastillas");
+    if (media) s += " y media";
+    return s;
+}
+
 std::string IpActual() {
     esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
     if (netif == nullptr) return "";
@@ -168,6 +210,7 @@ void Madre::Start() {
     RegistrarRecordatoriosTelegram();
     RegistrarResumenTelegram();
     RegistrarEmergenciaTelegram();
+    RegistrarAjustesTelegram();
     ultima_senal_ms_ = esp_timer_get_time() / 1000;
     // 12 KB: las noticias usan HTTPS (mbedtls) y necesitan bastante pila
     xTaskCreate(&Madre::TareaEntrada, "madre", 12288, this, 2, nullptr);
@@ -548,6 +591,13 @@ void Madre::AplicarAjustes() {
     const cJSON* res = cJSON_GetObjectItemCaseSensitive(raiz, "resumen");
     a.resumen_activo = Bool(res, "activo", true);
     if (Str(res, "hora").size() == 5) a.resumen_hora = Str(res, "hora");
+    const cJSON* rem = cJSON_GetObjectItemCaseSensitive(raiz, "remedios");
+    a.remedios_avisos = num(rem, "avisos", 3);
+    a.remedios_minutos = num(rem, "minutos", 10);
+    if (a.remedios_avisos < 1) a.remedios_avisos = 1;
+    if (a.remedios_avisos > 10) a.remedios_avisos = 10;
+    if (a.remedios_minutos < 1) a.remedios_minutos = 1;
+    if (a.remedios_minutos > 120) a.remedios_minutos = 120;
     const cJSON* m = cJSON_GetObjectItemCaseSensitive(raiz, "mama");
     a.mama_apodo = Str(m, "apodo");
     if (a.mama_apodo.empty()) {
@@ -573,6 +623,202 @@ void Madre::AplicarAjustes() {
     ESP_LOGI(TAG, "Ajustes: radar %s %d cm, saludo %s (%d h), bienestar %s (%d h), volumen %d",
              a.radar_activo ? "sí" : "no", a.radar_puertas * 75, a.saludo_activo ? "sí" : "no",
              a.saludo_horas_quieta, a.bienestar_activo ? "sí" : "no", a.bienestar_horas, a.volumen);
+}
+
+// ----------------------------------------------------------------------------
+// Ajustes por Telegram (/ajustes, /estado): lo mismo que la pestaña Ajustes de la página
+// ----------------------------------------------------------------------------
+namespace {
+struct Interruptor {
+    const char* id;        // callback "aj:<id>"
+    const char* seccion;   // objeto dentro de "ajustes"
+    const char* campo;
+    bool por_defecto;
+    const char* nombre;
+};
+const Interruptor kInterruptores[] = {
+    {"radar", "radar", "activo", true, "📡 Radar (saber si está en la pieza)"},
+    {"aviradar", "radar", "avisosTelegram", false, "🔔 Avisos del radar por Telegram"},
+    {"saludo", "saludo", "activo", true, "🌅 Saludo cuando se levanta"},
+    {"bienestar", "bienestar", "activo", true, "💛 Aviso si no hay señales"},
+    {"noticias", "noticias", "activo", true, "📰 Noticias"},
+    {"resumen", "resumen", "activo", true, "📋 Resumen del día"},
+};
+}  // namespace
+
+// Cambia un valor de "ajustes" (seccion vacía = en la raíz), lo guarda y lo aplica.
+bool Madre::CambiarAjuste(const char* seccion, const char* campo, cJSON* valor) {
+    cJSON* raiz = cJSON_Parse(GetSeccion("ajustes").c_str());
+    if (!cJSON_IsObject(raiz)) {
+        cJSON_Delete(raiz);
+        raiz = cJSON_CreateObject();
+    }
+    cJSON* destino = raiz;
+    if (seccion && seccion[0]) {
+        destino = cJSON_GetObjectItemCaseSensitive(raiz, seccion);
+        if (!cJSON_IsObject(destino)) {
+            cJSON_DeleteItemFromObjectCaseSensitive(raiz, seccion);
+            destino = cJSON_AddObjectToObject(raiz, seccion);
+        }
+    }
+    if (cJSON_GetObjectItemCaseSensitive(destino, campo)) {
+        cJSON_ReplaceItemInObjectCaseSensitive(destino, campo, valor);
+    } else {
+        cJSON_AddItemToObject(destino, campo, valor);
+    }
+    char* txt = cJSON_PrintUnformatted(raiz);
+    std::string nuevo = txt ? txt : "";
+    if (txt) cJSON_free(txt);
+    cJSON_Delete(raiz);
+    if (nuevo.empty() || nuevo.size() > kMaxSeccion || !Guardar("ajustes", nuevo)) return false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ajustes_ = nuevo;
+    }
+    AplicarAjustes();
+    return true;
+}
+
+std::string Madre::TextoAjustes(std::string& botones) {
+    cJSON* raiz = cJSON_Parse(GetSeccion("ajustes").c_str());
+    Ajustes a;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        a = aj_;
+    }
+    std::string t = "⚙️ Ajustes del equipo de mamá\n(tocá un botón para prender o apagar)\n\n";
+    botones = "{\"inline_keyboard\":[";
+    for (const auto& i : kInterruptores) {
+        bool v = Bool(cJSON_GetObjectItemCaseSensitive(raiz, i.seccion), i.campo, i.por_defecto);
+        std::string fila = std::string(v ? "✅ " : "⬜ ") + i.nombre;
+        botones += "[{\"text\":\"" + fila + "\",\"callback_data\":\"aj:" + i.id + "\"}],";
+    }
+    cJSON_Delete(raiz);
+    botones += "[{\"text\":\"🔉 Volumen -10\",\"callback_data\":\"aj:vol-\"},"
+               "{\"text\":\"🔊 Volumen +10\",\"callback_data\":\"aj:vol+\"}],"
+               "[{\"text\":\"💊 Avisos -1\",\"callback_data\":\"aj:av-\"},"
+               "{\"text\":\"💊 Avisos +1\",\"callback_data\":\"aj:av+\"}],"
+               "[{\"text\":\"⏱ Minutos -5\",\"callback_data\":\"aj:min-\"},"
+               "{\"text\":\"⏱ Minutos +5\",\"callback_data\":\"aj:min+\"}]]}";
+    t += "🔊 Volumen: " + std::to_string(a.volumen) + "\n";
+    t += "📋 Resumen del día a las " + a.resumen_hora + "\n";
+    t += "💛 Aviso si no hay señales en " + std::to_string(a.bienestar_horas) + " horas\n";
+    t += "🌅 Saludo después de " + std::to_string(a.saludo_horas_quieta) + " horas quieta\n";
+    t += "📰 Noticias: " + std::to_string(a.noticias_cantidad) + " por vez\n";
+    t += "💊 Remedios: " + std::to_string(a.remedios_avisos) +
+         (a.remedios_avisos == 1 ? " aviso" : " avisos, cada " + std::to_string(a.remedios_minutos) + " minutos") +
+         "\n\nTambién podés escribir:\n"
+         "/ajustes avisos 4  (avisos de remedios, de 1 a 10)\n"
+         "/ajustes minutos 15  (entre aviso y aviso, de 1 a 120)\n"
+         "/ajustes volumen 60\n"
+         "/ajustes resumen 21:30\n"
+         "/ajustes bienestar 12  (horas)\n"
+         "/ajustes saludo 3  (horas quieta)\n"
+         "/ajustes noticias 4  (cuántas, de 1 a 5)";
+    return t;
+}
+
+void Madre::RegistrarAjustesTelegram() {
+    auto& tg = TelegramBot::GetInstance();
+    tg.AddAdminCommand(
+        [this](const std::string& cmd, const std::string& arg, std::string& texto, std::string& b) {
+            if (cmd == "/estado") {
+                cJSON* e = cJSON_Parse(EstadoJson().c_str());
+                texto = "📟 Estado del equipo de mamá\n"
+                        "Hora: " + Str(e, "hora") + "\n"
+                        "WiFi: " + Str(e, "wifi") + "\n"
+                        "Dirección de la página: http://" + Str(e, "ip") + "\n"
+                        "Presencia: " + Str(e, "presencia");
+                cJSON_Delete(e);
+                return true;
+            }
+            if (cmd != "/ajustes") return false;
+            if (arg.empty()) {
+                texto = TextoAjustes(b);
+                return true;
+            }
+            std::string que = arg.substr(0, arg.find(' '));
+            std::string valor = arg.find(' ') == std::string::npos ? "" : arg.substr(arg.find(' ') + 1);
+            while (!valor.empty() && valor.back() == ' ') valor.pop_back();
+            for (auto& c : que) c = (char)tolower((unsigned char)c);
+            char* fin = nullptr;
+            long n = strtol(valor.c_str(), &fin, 10);
+            bool es_numero = !valor.empty() && fin && *fin == '\0';
+            bool ok = false;
+            if (que == "volumen" && es_numero && n >= 30 && n <= 100) {
+                ok = CambiarAjuste("", "volumen", cJSON_CreateNumber(n));
+            } else if ((que == "avisos" || que == "remedios") && es_numero && n >= 1 && n <= 10) {
+                ok = CambiarAjuste("remedios", "avisos", cJSON_CreateNumber(n));
+            } else if (que == "minutos" && es_numero && n >= 1 && n <= 120) {
+                ok = CambiarAjuste("remedios", "minutos", cJSON_CreateNumber(n));
+            } else if (que == "bienestar" && es_numero && n >= 1 && n <= 48) {
+                ok = CambiarAjuste("bienestar", "horas", cJSON_CreateNumber(n));
+            } else if (que == "saludo" && es_numero && n >= 1 && n <= 12) {
+                ok = CambiarAjuste("saludo", "horasQuieta", cJSON_CreateNumber(n));
+            } else if (que == "noticias" && es_numero && n >= 1 && n <= 5) {
+                ok = CambiarAjuste("noticias", "cantidad", cJSON_CreateNumber(n));
+            } else if (que == "resumen") {
+                int h = -1, m = -1;
+                if (sscanf(valor.c_str(), "%d:%d", &h, &m) == 2 && h >= 0 && h <= 23 && m >= 0 && m <= 59) {
+                    char hora[8];
+                    snprintf(hora, sizeof(hora), "%02d:%02d", h, m);
+                    ok = CambiarAjuste("resumen", "hora", cJSON_CreateString(hora));
+                }
+            } else {
+                texto = "No conozco ese ajuste. Escribí /ajustes para ver la lista.";
+                return true;
+            }
+            if (!ok) {
+                texto = "No lo pude cambiar. Revisá el valor (por ejemplo: /ajustes volumen 60, de 30 a 100).";
+                return true;
+            }
+            texto = "✅ Listo, cambiado.\n\n" + TextoAjustes(b);
+            return true;
+        },
+        "/ajustes - ver y cambiar los ajustes del equipo (volumen, radar, saludo, noticias...)\n"
+        "/estado - hora, WiFi y dirección de la página del equipo");
+
+    tg.AddCallbackHandler([this](const std::string& data, std::string& texto, std::string& b) {
+        if (data.rfind("aj:", 0) != 0) return false;
+        std::string id = data.substr(3);
+        bool ok = false;
+        if (id == "vol+" || id == "vol-") {
+            int v;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                v = aj_.volumen;
+            }
+            v += id == "vol+" ? 10 : -10;
+            if (v > 100) v = 100;
+            if (v < 30) v = 30;
+            ok = CambiarAjuste("", "volumen", cJSON_CreateNumber(v));
+        } else if (id == "av+" || id == "av-" || id == "min+" || id == "min-") {
+            int avisos, minutos;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                avisos = aj_.remedios_avisos;
+                minutos = aj_.remedios_minutos;
+            }
+            if (id[0] == 'a') {
+                avisos = std::max(1, std::min(10, avisos + (id == "av+" ? 1 : -1)));
+                ok = CambiarAjuste("remedios", "avisos", cJSON_CreateNumber(avisos));
+            } else {
+                minutos = id == "min+" ? minutos + 5 : minutos - 5;
+                minutos = std::max(1, std::min(120, minutos));
+                ok = CambiarAjuste("remedios", "minutos", cJSON_CreateNumber(minutos));
+            }
+        } else {
+            for (const auto& i : kInterruptores) {
+                if (id != i.id) continue;
+                cJSON* raiz = cJSON_Parse(GetSeccion("ajustes").c_str());
+                bool v = Bool(cJSON_GetObjectItemCaseSensitive(raiz, i.seccion), i.campo, i.por_defecto);
+                cJSON_Delete(raiz);
+                ok = CambiarAjuste(i.seccion, i.campo, cJSON_CreateBool(!v));
+            }
+        }
+        texto = (ok ? "✅ Listo, cambiado.\n\n" : "No lo pude cambiar.\n\n") + TextoAjustes(b);
+        return true;
+    });
 }
 
 // ----------------------------------------------------------------------------
@@ -771,18 +1017,24 @@ void Madre::RevisarAgenda(int64_t ahora) {
     for (auto& fr : kFranjas) {
         const cJSON* f = cJSON_GetObjectItemCaseSensitive(franjas, fr[0]);
         if (!cJSON_IsObject(f) || Str(f, "hora") != hhmm) continue;
-        std::string lista;
+        // Simple para ella: qué casillero abrir y cuántas pastillas tiene.
+        // Los colores van aparte, por si pregunta; los nombres de los remedios no se dicen.
+        std::string lista, colores;
+        double pastillas = 0;
         const cJSON* m;
         cJSON_ArrayForEach(m, cJSON_GetObjectItemCaseSensitive(f, "meds")) {
             if (!TieneDia(m, hoy) || Str(m, "nombre").empty()) continue;
             lista += (lista.empty() ? "" : "; ") + Str(m, "nombre");
-            std::string dosis = Str(m, "dosis"), aspecto = Str(m, "aspecto");
-            if (!dosis.empty()) lista += ", " + dosis;
-            if (!aspecto.empty()) lista += " (" + aspecto + ")";
+            pastillas += ContarPastillas(Str(m, "dosis"));
+            std::string aspecto = Str(m, "aspecto");
+            colores += (colores.empty() ? "" : ", ") + (aspecto.empty() ? std::string("una pastilla") : aspecto);
         }
         if (lista.empty()) continue;
         Aviso a;
-        a.texto = std::string("Es hora de tomar los remedios de la ") + fr[1] + ", del pastillero: " + lista;
+        a.texto = std::string("Es hora de los remedios de la ") + fr[1] + ": abrí el casillero del " +
+                  kDias[tm.tm_wday] + " a la " + fr[1] + ", que tiene " + TextoPastillas(pastillas) + ".";
+        a.privado = "Si pregunta cuáles son, decile sólo cómo son: " + colores +
+                    ". No nombres los remedios ni las dosis.";
         a.repetir = true;
         a.avisar = true;
         a.remedio = true;
@@ -802,6 +1054,9 @@ void Madre::RevisarAgenda(int64_t ahora) {
     }
 }
 
+int Madre::VecesAviso(const Aviso& a) const { return a.remedio ? aj_.remedios_avisos : 3; }
+int Madre::MinutosAviso(const Aviso& a) const { return a.remedio ? aj_.remedios_minutos : 10; }
+
 void Madre::ProcesarAvisos(int64_t ahora) {
     std::vector<std::string> para_telegram;
     std::vector<std::string> para_diario;
@@ -810,13 +1065,14 @@ void Madre::ProcesarAvisos(int64_t ahora) {
         std::lock_guard<std::mutex> lock(mutex_);
         // Vencidos
         for (auto it = avisos_.begin(); it != avisos_.end();) {
-            if (it->intentos >= 3 && ahora >= it->proximo_ms) {
-                para_diario.push_back("⚠️ " + it->hora + " " + it->corto + ": no confirmó (se lo dije 3 veces)");
+            if (it->intentos >= VecesAviso(*it) && ahora >= it->proximo_ms) {
+                const std::string veces = it->intentos == 1 ? "1 vez" : std::to_string(it->intentos) + " veces";
+                para_diario.push_back("⚠️ " + it->hora + " " + it->corto + ": no confirmó (se lo dije " + veces + ")");
                 MarcarEstado(it->rec_id, "no_confirmo");
                 for (auto& e : escuchados_) {
                     if (e.creado_ms == it->creado_ms && e.texto == it->texto) e.estado = "no_confirmo";
                 }
-                if (it->avisar) para_telegram.push_back("⚠️ Mamá no confirmó este recordatorio (se lo dije 3 veces): " + it->texto);
+                if (it->avisar) para_telegram.push_back("⚠️ Mamá no confirmó este recordatorio (se lo dije " + veces + "): " + it->texto);
                 it = avisos_.erase(it);
             } else if (it->intentos == 0 && ahora - it->creado_ms > 2 * 3600 * 1000) {
                 para_diario.push_back("⚠️ " + it->hora + " " + it->corto + ": no se lo pude decir");
@@ -828,7 +1084,7 @@ void Madre::ProcesarAvisos(int64_t ahora) {
             }
         }
         for (auto& a : avisos_) {
-            if (a.intentos < 3 && ahora >= a.proximo_ms) decir.push_back(a.texto);
+            if (a.intentos < VecesAviso(a) && ahora >= a.proximo_ms) decir.push_back(a.texto);
         }
     }
     for (auto& m : para_telegram) {
@@ -842,8 +1098,9 @@ void Madre::ProcesarAvisos(int64_t ahora) {
         std::lock_guard<std::mutex> lock(mutex_);
         aviso_actual_.clear();
         for (auto it = avisos_.begin(); it != avisos_.end();) {
-            if (it->intentos < 3 && ahora >= it->proximo_ms) {
-                aviso_actual_.push_back(it->texto + (it->repetir ? " [pedir confirmación]" : ""));
+            if (it->intentos < VecesAviso(*it) && ahora >= it->proximo_ms) {
+                aviso_actual_.push_back(it->texto + (it->repetir ? " [pedir confirmación]" : "") +
+                                        (it->privado.empty() ? "" : " [" + it->privado + "]"));
                 it->intentos++;
                 MarcarEstado(it->rec_id, it->repetir ? "esperando" : "dicho");
                 {
@@ -870,7 +1127,7 @@ void Madre::ProcesarAvisos(int64_t ahora) {
                     it = avisos_.erase(it);       // se dice una sola vez
                     continue;
                 }
-                it->proximo_ms = ahora + 10 * 60 * 1000;   // repetir en 10 minutos
+                it->proximo_ms = ahora + (int64_t)MinutosAviso(*it) * 60 * 1000;   // repetir
             }
             ++it;
         }
@@ -2492,38 +2749,49 @@ std::string Madre::TextoMama() {
     return s + ".\n";
 }
 
+// Para ella, simple: qué casillero y cuántas pastillas. Los colores, sólo si pregunta.
+// Los nombres de los remedios y las dosis no se le dicen (están en la página para la familia).
 std::string Madre::TextoPastillero(bool solo_hoy) {
-    static const char* const kFranjas[][2] = {{"manana", "Mañana"}, {"tarde", "Tarde"}, {"noche", "Noche"}};
+    static const char* const kFranjas[][3] = {
+        {"manana", "Mañana", "mañana"}, {"tarde", "Tarde", "tarde"}, {"noche", "Noche", "noche"}};
     cJSON* raiz = cJSON_Parse(GetSeccion("pastillero").c_str());
     const cJSON* franjas = cJSON_GetObjectItemCaseSensitive(raiz, "franjas");
     int hoy = DiaPaginaHoy();
+    time_t t = time(nullptr);
+    struct tm tm;
+    localtime_r(&t, &tm);
     std::string s;
-    if (solo_hoy) s = std::string("Hoy es ") + kDiasPagina[hoy] + ".\n";
+    if (solo_hoy) s = std::string("Hoy es ") + kDias[tm.tm_wday] + ".\n";
+    bool hay = false;
     for (auto& f : kFranjas) {
         const cJSON* fr = cJSON_GetObjectItemCaseSensitive(franjas, f[0]);
         if (!cJSON_IsObject(fr)) continue;
         std::string hora = Str(fr, "hora");
-        std::string linea;
-        const cJSON* meds = cJSON_GetObjectItemCaseSensitive(fr, "meds");
+        double pastillas = 0;
+        std::string colores;
+        std::vector<std::string> dias_txt;
         const cJSON* m;
-        cJSON_ArrayForEach(m, meds) {
+        cJSON_ArrayForEach(m, cJSON_GetObjectItemCaseSensitive(fr, "meds")) {
+            if (Str(m, "nombre").empty()) continue;
             if (solo_hoy && !TieneDia(m, hoy)) continue;
-            std::string nombre = Str(m, "nombre"), dosis = Str(m, "dosis"), aspecto = Str(m, "aspecto");
-            if (nombre.empty()) continue;
-            linea += "  * " + nombre;
-            if (!dosis.empty()) linea += ", " + dosis;
-            if (!aspecto.empty()) linea += " (es " + aspecto + ")";
-            if (!solo_hoy) linea += "; " + TextoDias(m);
-            linea += "\n";
+            pastillas += ContarPastillas(Str(m, "dosis"));
+            std::string aspecto = Str(m, "aspecto");
+            colores += (colores.empty() ? "" : ", ") + (aspecto.empty() ? std::string("una pastilla") : aspecto);
         }
-        if (linea.empty()) continue;
-        s += std::string("- ") + f[1] + (hora.empty() ? "" : " (a las " + hora + ")") + ":\n" + linea;
+        if (pastillas == 0) continue;
+        hay = true;
+        s += std::string("- ") + f[1] + (hora.empty() ? "" : " (a las " + hora + ")") + ": ";
+        if (solo_hoy) s += std::string("casillero del ") + kDias[tm.tm_wday] + " a la " + f[2] + ", ";
+        s += TextoPastillas(pastillas) + ". [Cómo son, sólo si pregunta: " + colores + "]\n";
     }
     cJSON_Delete(raiz);
-    if (s.empty() || (solo_hoy && s.find("- ") == std::string::npos)) {
+    if (!hay) {
         return solo_hoy ? s + "Hoy no hay remedios cargados en el pastillero."
                         : "Todavía no hay remedios cargados en el pastillero.";
     }
+    s += "\nDecile sólo qué casillero abrir y cuántas pastillas tiene. No nombres los remedios ni las dosis. "
+         "Lo que está entre corchetes no lo leas, usalo sólo si pregunta cómo son. Respondé en texto simple, "
+         "sin asteriscos ni listas.";
     return s;
 }
 
@@ -2585,9 +2853,9 @@ void Madre::RegistrarHerramientas() {
         [this](const PropertyList&) -> ReturnValue { return TextoFamilia(); });
 
     mcp.AddTool("self.madre.get_pillbox",
-        "Get what medicine goes in each compartment of the user's pillbox and at what time she "
-        "takes it (Mañana / Tarde / Noche). Use it when she asks which pills to take, what a pill "
-        "is for, or what is in the pillbox. 'today_only' = true to get only today's medicines.",
+        "Get which compartment of the user's pillbox she has to open (day and Mañana / Tarde / Noche), "
+        "at what time, and how many pills it has. Use it when she asks which pills to take or what is in "
+        "the pillbox. Follow the instructions it returns. 'today_only' = true for today only.",
         PropertyList({Property("today_only", kPropertyTypeBoolean, true)}),
         [this](const PropertyList& props) -> ReturnValue {
             return TextoPastillero(props["today_only"].value<bool>());
@@ -2605,7 +2873,8 @@ void Madre::RegistrarHerramientas() {
         "Call it ONLY when the user says exactly 'Tengo un aviso' (the device says this phrase by itself "
         "when it is time for a reminder). It returns the reminders you must tell the user now. Tell "
         "them warmly, in few words, in Spanish, addressing her by her name. If an item says "
-        "'[pedir confirmación]', at the end ask her to touch the button or say 'listo' when she has done it "
+        "'[pedir confirmación]', at the end ask her to touch the button or say 'listo' when she has done it. "
+        "Other text in brackets is private information for you: never read it aloud, use it only if she asks "
         "(do not read the brackets aloud).",
         PropertyList(),
         [this](const PropertyList&) -> ReturnValue {

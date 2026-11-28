@@ -1257,6 +1257,17 @@ endmenu
         default y
         depends on TELEGRAM_ENABLE
 
+    config TELEGRAM_OTA
+        bool "Update firmware from Telegram"
+        default n
+        depends on TELEGRAM_ENABLE
+        help
+            El administrador le manda el archivo xiaozhi.bin al bot y el equipo se
+            actualiza. Solo acepta archivos compilados para esta misma placa y este
+            mismo bot. Si la version nueva no arranca bien, vuelve sola a la
+            anterior. Ademas, ignora las actualizaciones del servidor oficial para
+            que no pisen este firmware.
+
     endmenu
 
 endmenu

@@ -19,6 +19,7 @@
 #include <vector>
 
 typedef struct httpd_req httpd_req_t;
+struct cJSON;
 typedef void* httpd_handle_t;
 
 class Madre {
@@ -106,9 +107,14 @@ private:
         int noticias_cantidad = 3;
         bool resumen_activo = true;
         std::string resumen_hora = "22:00";
+        int remedios_avisos = 3;     // veces que se le repite el aviso de los remedios
+        int remedios_minutos = 10;   // minutos entre un aviso y el siguiente
     };
     Ajustes aj_;
     void AplicarAjustes();
+    bool CambiarAjuste(const char* seccion, const char* campo, cJSON* valor);  // toma valor
+    std::string TextoAjustes(std::string& botones);
+    void RegistrarAjustesTelegram();
 
     // ---- Recordatorios pendientes
     struct Aviso {
@@ -119,11 +125,15 @@ private:
         std::string hora;          // "21:00" (para el resumen)
         std::string corto;         // texto corto para el resumen ("remedios de la noche")
         std::string rec_id;        // id del recordatorio (para registrar qué pasó)
+        std::string privado;       // dato para la IA que no se lee salvo que pregunte (colores)
         int intentos = 0;          // veces que se dijo
         int64_t creado_ms = 0;
         int64_t proximo_ms = 0;    // cuándo decirlo (otra vez)
     };
     std::vector<Aviso> avisos_;
+    // Repeticiones de un aviso (los de remedios se regulan en Ajustes). Llamar con mutex_ tomado.
+    int VecesAviso(const Aviso& a) const;
+    int MinutosAviso(const Aviso& a) const;
     std::vector<std::string> aviso_actual_;     // lo que se está diciendo ahora
     int ultimo_minuto_ = -1;
     void RevisarAgenda(int64_t ahora_ms);

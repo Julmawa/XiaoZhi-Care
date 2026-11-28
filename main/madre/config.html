@@ -285,6 +285,7 @@ const AJUSTES_BASE = {
                      "Buen día, ¿cómo dormiste?"] },
   bienestar: { activo: true, horas: 14 },
   resumen: { activo: true, hora: "22:00" },
+  remedios: { avisos: 3, minutos: 10 },
   pastillero: { conectar: false, ip: "" },
   noticias: { activo: true, enSaludo: false, fuente: "infobae", cantidad: 3 },
   mama: { nombre: "", apodo: "", cumple: "" },
@@ -928,6 +929,18 @@ function dibujarAjustes() {
     </div>
 
     <div class="tarjeta">
+      <div class="grupo-tit"><span class="ico">💊</span>Avisos de los remedios</div>
+      <div class="sub">Si mamá no confirma que tomó los remedios, XiaoZhi se lo vuelve a decir.
+        Acá elegís cuántas veces y cada cuánto. También se cambia por Telegram con <b>/ajustes</b>.</div>
+      <label>Cuántas veces avisarle: <span class="valor" id="aRemAvTxt">${a.remedios.avisos}</span></label>
+      <input type="range" id="aRemAv" min="1" max="10" step="1" value="${a.remedios.avisos}"
+        oninput="document.getElementById('aRemAvTxt').textContent = this.value">
+      <label>Tiempo entre un aviso y otro: <span class="valor" id="aRemMinTxt">${a.remedios.minutos} min</span></label>
+      <input type="range" id="aRemMin" min="1" max="120" step="1" value="${a.remedios.minutos}"
+        oninput="document.getElementById('aRemMinTxt').textContent = this.value + ' min'">
+    </div>
+
+    <div class="tarjeta">
       <div class="grupo-tit"><span class="ico">📋</span>Resumen diario</div>
       <div class="sub">Todos los días, a la hora que elijas, te llega por Telegram cómo fue el día de mamá:
         cuándo durmió y se levantó, los recordatorios que confirmó, lo que anotó en compras y cuánto charló con XiaoZhi.
@@ -1025,6 +1038,7 @@ function guardarAjustes() {
   const horaResumen = val("aResumenHora");
   if (chk("aResumen") && !/^\d{2}:\d{2}$/.test(horaResumen)) { aviso("Elegí la hora del resumen"); return; }
   a.resumen = { activo: chk("aResumen"), hora: horaResumen || "22:00" };
+  a.remedios = { avisos: num("aRemAv"), minutos: num("aRemMin") };
   a.pastillero = { conectar: chk("aPastConectar"), ip };
   a.noticias = { activo: chk("aNotActivo"), enSaludo: chk("aNotSaludo"),
                  fuente: document.getElementById("aNotFuente").value, cantidad: num("aNotCant") };
